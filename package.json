@@ -1,0 +1,24 @@
+{
+  "name": "dsh-chat-share",
+  "version": "0.1.0",
+  "description": "Share a selected range of chat messages as Markdown or HTML (Web /share command)",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/types/index.d.ts",
+  "exports": {
+    ".": { "types": "./lib/types/index.d.ts", "default": "./lib/index.js" },
+    "./invariant": { "types": "./lib/types/invariant.d.ts", "default": "./lib/invariant.js" },
+    "./src/*": "./src/*",
+    "./package.json": "./package.json"
+  },
+  "files": ["lib", "cordis.patch.yml", "README.md", "LICENSE"],
+  "scripts": {
+    "test": "echo \"Run the package tests inside a deepseek-harness checkout; see README.md\" && exit 0"
+  },
+  "license": "MIT",
+  "peerDependencies": {
+    "@deepseek-ai/cordis": ">=0.0.1-rc.1 <0.2.0",
+    "@deepseek-ai/dsh-commands": ">=0.0.1-rc.1 <0.2.0"
+  },
+  "dsh": { "bundle": { "patch": "./cordis.patch.yml" } }
+}

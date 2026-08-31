@@ -1,0 +1,57 @@
+/** Locale namespace owned by the chat-segment share browser dialog. */
+export const NS = 'session-chat-share'
+
+/** Simplified-Chinese chat-share strings. */
+export const zh = {
+  'header.label': '分享',
+  'dialog.title': '分享聊天片段',
+  'dialog.description': '选择消息范围，以 Markdown 或 HTML 复制或下载。',
+  'dialog.loading': '正在加载消息…',
+  'dialog.empty': '此会话没有可分享的消息。',
+  'dialog.historyFailed': '无法加载消息。',
+  'dialog.copyFailed': '复制失败。',
+  'dialog.downloadFailed': '下载失败。',
+  'dialog.rangeFrom': '从',
+  'dialog.rangeTo': '到',
+  'dialog.format': '格式',
+  'dialog.format.markdown': 'Markdown',
+  'dialog.format.html': 'HTML',
+  'dialog.messages': '消息',
+  'dialog.preview': '预览',
+  'dialog.previewTruncated': '预览已截断。',
+  'dialog.copy': '复制',
+  'dialog.copied': '已复制',
+  'dialog.download': '下载',
+  'dialog.close': '关闭',
+  'role.user': '用户',
+  'role.assistant': '助手',
+} as const
+
+/** English chat-share strings. */
+export const en: Record<keyof typeof zh, string> = {
+  'header.label': 'Share',
+  'dialog.title': 'Share chat segment',
+  'dialog.description': 'Select a message range and copy or download it as Markdown or HTML.',
+  'dialog.loading': 'Loading messages…',
+  'dialog.empty': 'This session has no shareable messages.',
+  'dialog.historyFailed': 'Could not load messages.',
+  'dialog.copyFailed': 'Copy failed.',
+  'dialog.downloadFailed': 'Download failed.',
+  'dialog.rangeFrom': 'From',
+  'dialog.rangeTo': 'To',
+  'dialog.format': 'Format',
+  'dialog.format.markdown': 'Markdown',
+  'dialog.format.html': 'HTML',
+  'dialog.messages': 'Messages',
+  'dialog.preview': 'Preview',
+  'dialog.previewTruncated': 'Preview truncated.',
+  'dialog.copy': 'Copy',
+  'dialog.copied': 'Copied',
+  'dialog.download': 'Download',
+  'dialog.close': 'Close',
+  'role.user': 'User',
+  'role.assistant': 'Assistant',
+}
+
+/** Stable locale keys consumed by the shared modal. */
+export type SessionChatShareKey = keyof typeof zh
