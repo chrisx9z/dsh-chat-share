@@ -3,10 +3,10 @@
 import { createSnapshotStore, type SessionId, type SnapshotStore } from '@deepseek-ai/dsh-client-runtime/client'
 import { writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { HistoryEntry } from '@deepseek-ai/dsh-api-remotes/client'
-import { renderShareHtml, renderShareMarkdown, shareFileName } from './render.ts'
+import { renderShareHtml, renderShareMarkdown, renderShareTxt, shareFileName } from './render.ts'
 
 /** Output formats the shared artifact can take. */
-export type ShareFormat = 'markdown' | 'html'
+export type ShareFormat = 'markdown' | 'html' | 'txt'
 
 /** One shareable message on the ordered chat surface. */
 export interface ShareMessage {
@@ -243,7 +243,9 @@ export class ChatShareController {
     try {
       const blob = current.format === 'html'
         ? new Blob([renderShareHtml(selected)], { type: 'text/html;charset=utf-8' })
-        : new Blob([renderShareMarkdown(selected)], { type: 'text/markdown;charset=utf-8' })
+        : current.format === 'txt'
+          ? new Blob([renderShareTxt(selected)], { type: 'text/plain;charset=utf-8' })
+          : new Blob([renderShareMarkdown(selected)], { type: 'text/markdown;charset=utf-8' })
       this.save(blob, shareFileName(String(sessionId), current.from, current.to, current.format))
       const next = this.store.getSnapshot().bySession[String(sessionId)]
       if (next !== undefined && next.open) this.publish(sessionId, { ...next, busy: null })

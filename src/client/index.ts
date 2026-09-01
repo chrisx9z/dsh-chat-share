@@ -7,7 +7,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-commands/client'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 // Type-only: pulls the ui-workspace Context merge (ctx.sessionRowMenu).
 import type {} from '@deepseek-ai/dsh-client-ui-workspace/client'
-import { ChatShareController, type HistoryPage, type HistoryReader } from './controller.ts'
+import { ChatShareController, type HistoryPage, type HistoryReader, type ShareFormat } from './controller.ts'
 import type { ChatShareDialogInjected } from './Dialog.tsx'
 import { ChatShareHeaderAction } from './HeaderAction.tsx'
 import { en, NS, zh, type SessionChatShareKey } from './locales.ts'
@@ -72,7 +72,7 @@ export function apply(ctx: ClientContext): void {
       hooks: { chatShare: controller.store },
       open: (sessionId: SessionId) => controller.open(sessionId),
       setRange: (sessionId: SessionId, from: number, to: number) => { controller.setRange(sessionId, from, to) },
-      setFormat: (sessionId: SessionId, format: 'markdown' | 'html') => { controller.setFormat(sessionId, format) },
+      setFormat: (sessionId: SessionId, format: ShareFormat) => { controller.setFormat(sessionId, format) },
       copy: (sessionId: SessionId) => controller.copy(sessionId),
       download: (sessionId: SessionId) => controller.download(sessionId),
       dismiss: (sessionId: SessionId) => { controller.dismiss(sessionId) },

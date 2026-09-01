@@ -1,4 +1,4 @@
-/** Pure renderers that turn a message range into shareable Markdown or a self-contained HTML page. */
+/** Pure renderers that turn a message range into shareable Markdown, plain text, or a self-contained HTML page. */
 
 import type { ShareFormat, ShareMessage } from './controller.ts'
 
@@ -16,6 +16,19 @@ export function renderShareMarkdown(messages: readonly ShareMessage[]): string {
   const lines: string[] = ['> Shared from DeepSeek Harness', '']
   for (const message of messages) {
     lines.push(`**${roleLabel(message.role)}** · ${formatShareTime(message.time)}`, '', message.text, '')
+  }
+  return lines.join('\n').trimEnd() + '\n'
+}
+
+/**
+ * Render the selected range as plain text with role headers and timestamps.
+ * @param messages - chronological share messages (already range-sliced).
+ * @returns one plain-text document (no markup).
+ */
+export function renderShareTxt(messages: readonly ShareMessage[]): string {
+  const lines: string[] = ['Shared from DeepSeek Harness', '']
+  for (const message of messages) {
+    lines.push(`${roleLabel(message.role)} · ${formatShareTime(message.time)}`, '', message.text, '')
   }
   return lines.join('\n').trimEnd() + '\n'
 }
@@ -125,5 +138,6 @@ export function renderShareHtml(messages: readonly ShareMessage[]): string {
 /** One safe browser download filename for the shared artifact. */
 export function shareFileName(sessionId: string, from: number, to: number, format: ShareFormat): string {
   const safe = sessionId.replace(/[^A-Za-z0-9_-]/g, '_')
-  return `dsh-chat-share-${safe}-${from + 1}-${to + 1}.${format === 'html' ? 'html' : 'md'}`
+  const extension = format === 'html' ? 'html' : format === 'txt' ? 'txt' : 'md'
+  return `dsh-chat-share-${safe}-${from + 1}-${to + 1}.${extension}`
 }

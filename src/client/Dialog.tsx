@@ -4,7 +4,7 @@ import { Button, IconCheckOutline16, IconCopyOutline16, IconDownloadOutline16, M
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import { CHAT_SHARE_ERROR, type ChatShareState, type ShareFormat } from './controller.ts'
 import { NS, type SessionChatShareKey } from './locales.ts'
-import { formatShareTime, renderShareHtml, renderShareMarkdown } from './render.ts'
+import { formatShareTime, renderShareHtml, renderShareMarkdown, renderShareTxt } from './render.ts'
 import css from './Dialog.module.css'
 
 /** Preview character ceiling inside the dialog; the shared artifact itself is never truncated. */
@@ -80,7 +80,9 @@ export function ChatShareDialog({
   }
 
   const range = messages.slice(from, to + 1)
-  const rendered = format === 'html' ? renderShareHtml(range) : renderShareMarkdown(range)
+  const rendered = format === 'html'
+    ? renderShareHtml(range)
+    : format === 'txt' ? renderShareTxt(range) : renderShareMarkdown(range)
   const preview = rendered.length > PREVIEW_MAX_CHARS
     ? `${rendered.slice(0, PREVIEW_MAX_CHARS)}\n${t('dialog.previewTruncated')}`
     : rendered
@@ -172,6 +174,16 @@ export function ChatShareDialog({
                   onChange={() => { setFormat(sessionId, 'html') }}
                 />
                 {t('dialog.format.html')}
+              </label>
+              <label>
+                <input
+                  type="radio"
+                  name={`chat-share-format-${String(sessionId)}`}
+                  value="txt"
+                  checked={format === 'txt'}
+                  onChange={() => { setFormat(sessionId, 'txt') }}
+                />
+                {t('dialog.format.txt')}
               </label>
             </fieldset>
           </div>
