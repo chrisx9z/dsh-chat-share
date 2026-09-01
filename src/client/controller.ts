@@ -506,7 +506,8 @@ export class ChatShareController {
     }
     try {
       const raw = await this.loadRaw(sessionId, signal)
-      const messages = this.buildRows(raw, false)
+      // Direct saves carry the WHOLE chat, not the dialog's 300-row cap.
+      const messages = buildShareMessages(raw, { includeTools: false })
       const entry: ChatShareEntry = {
         open: false, loading: false, raw, messages, from: 0, to: Math.max(0, messages.length - 1),
         format: 'markdown', redact: true, includeTools: false, busy: null, copied: false, error: null,
