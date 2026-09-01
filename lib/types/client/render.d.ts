@@ -5,6 +5,7 @@ export interface ShareLabels {
     user: string;
     assistant: string;
     tool: string;
+    subagent: string;
     sharedFrom: string;
 }
 /** Optional artifact header facts. */

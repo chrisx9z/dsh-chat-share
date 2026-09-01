@@ -1,15 +1,17 @@
 /** Browser plugin owning the chat-segment share dialog, its controller, and the Header entry. */
 
 import type { ClientContext, SessionId } from '@deepseek-ai/dsh-client-runtime/client'
-import type { ConnectionHandle } from '@deepseek-ai/dsh-api-remotes/client'
+import type { ConnectionHandle, HistoryEntry } from '@deepseek-ai/dsh-api-remotes/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-ui-commands/client'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 // Type-only: pulls the ui-workspace Context merge (ctx.sessionRowMenu).
 import type {} from '@deepseek-ai/dsh-client-ui-workspace/client'
+import { toPng } from 'html-to-image'
 import {
   ChatShareController,
-  type AttachmentReader, type HistoryPage, type HistoryReader, type MetaReader, type ShareFormat,
+  type AttachmentReader, type ChildHistoryReader, type HistoryPage, type HistoryReader,
+  type MetaReader, type ShareFormat, type SubagentChild, type SubagentReader,
 } from './controller.ts'
 import type { ChatShareDialogInjected } from './Dialog.tsx'
 import { ChatShareHeaderAction } from './HeaderAction.tsx'
@@ -104,8 +106,41 @@ function labelsOf(translate: (key: SessionChatShareKey) => string): () => ShareL
     user: translate('role.user'),
     assistant: translate('role.assistant'),
     tool: translate('role.tool'),
+    subagent: translate('role.subagent'),
     sharedFrom: translate('artifact.sharedFrom'),
   })
+}
+
+/** Wire `subagents.list` (one tail page per child via `subagents.history`). */
+function subagentReaders(connection: ConnectionHandle): {
+  subagents: SubagentReader
+  childHistory: ChildHistoryReader
+} {
+  return {
+    subagents: async (parentSessionId: SessionId): Promise<SubagentChild[]> => {
+      const response = await connection.api.subagents.list({ parentSessionId })
+      const result = response.result
+      if (!result.ok) throw new Error(`Subagent list failed: ${result.error.message}`)
+      return result.value.entries.map((entry) => {
+        const child = entry as unknown as { childSessionId?: string; title?: string }
+        return {
+          childSessionId: child.childSessionId ?? '',
+          ...(child.title !== undefined ? { title: child.title } : {}),
+        }
+      })
+    },
+    childHistory: async (parentSessionId: SessionId, childSessionId: string): Promise<readonly HistoryEntry[]> => {
+      const response = await connection.api.subagents.history({
+        parentSessionId,
+        childSessionId: childSessionId as never,
+        mode: 'continuable' as const,
+        maxMessages: 50,
+      })
+      const result = response.result
+      if (!result.ok) throw new Error(`Subagent history failed: ${result.error.message}`)
+      return result.value.events
+    },
+  }
 }
 
 /** Run a `/share` command intent produced by the host command handler. */
@@ -127,6 +162,7 @@ function runShareIntent(controller: ChatShareController, sessionId: SessionId, r
 export function apply(ctx: ClientContext): void {
   const connection = ctx.get('connection') as ConnectionHandle
   const readHistory = historyReader(connection)
+  const { subagents, childHistory } = subagentReaders(connection)
   const controller = new ChatShareController(
     readHistory,
     undefined,
@@ -134,6 +170,9 @@ export function apply(ctx: ClientContext): void {
     attachmentReader(connection),
     metaReader(connection, readHistory),
     labelsOf(ctx.locale.bind(NS)),
+    subagents,
+    childHistory,
+    node => toPng(node, { pixelRatio: 2, cacheBust: true }),
   )
   ctx.provide('chatShare', controller)
   ctx.effect(() => async () => { await controller.dispose() }, 'session-chat-share: browser lifecycle')
@@ -161,6 +200,9 @@ export function apply(ctx: ClientContext): void {
       setFormat: (sessionId: SessionId, format: ShareFormat) => { controller.setFormat(sessionId, format) },
       setRedact: (sessionId: SessionId, redact: boolean) => { controller.setRedact(sessionId, redact) },
       setIncludeTools: (sessionId: SessionId, includeTools: boolean) => { controller.setIncludeTools(sessionId, includeTools) },
+      setIncludeSubagents: (sessionId: SessionId, includeSubagents: boolean) => controller.setIncludeSubagents(sessionId, includeSubagents),
+      setMultiMode: (sessionId: SessionId, multiMode: boolean) => { controller.setMultiMode(sessionId, multiMode) },
+      setSelected: (sessionId: SessionId, indices: readonly number[]) => { controller.setSelected(sessionId, indices) },
       copy: (sessionId: SessionId) => controller.copy(sessionId),
       download: (sessionId: SessionId) => controller.download(sessionId),
       dismiss: (sessionId: SessionId) => { controller.dismiss(sessionId) },

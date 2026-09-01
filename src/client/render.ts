@@ -7,6 +7,7 @@ export interface ShareLabels {
   user: string
   assistant: string
   tool: string
+  subagent: string
   sharedFrom: string
 }
 
@@ -30,6 +31,7 @@ const DEFAULT_LABELS: ShareLabels = {
   user: 'User',
   assistant: 'Assistant',
   tool: 'Tool',
+  subagent: 'Subagent',
   sharedFrom: 'Shared from DeepSeek Harness',
 }
 
@@ -45,7 +47,8 @@ function labelsOf(options: ShareRenderOptions): ShareLabels {
 function roleLabel(role: ShareMessage['role'], labels: ShareLabels): string {
   if (role === 'user') return labels.user
   if (role === 'assistant') return labels.assistant
-  return labels.tool
+  if (role === 'tool') return labels.tool
+  return labels.subagent
 }
 
 /** The artifact header: title, model, and the shared-from line. */
@@ -309,7 +312,7 @@ export function renderShareHtml(messages: readonly ShareMessage[], options: Shar
 /** One safe browser download filename for the shared artifact. */
 export function shareFileName(sessionId: string, from: number, to: number, format: ShareFormat): string {
   const safe = sessionId.replace(/[^A-Za-z0-9_-]/g, '_')
-  const extension = format === 'html' ? 'html' : format === 'txt' ? 'txt' : 'md'
+  const extension = format === 'html' ? 'html' : format === 'txt' ? 'txt' : format === 'png' ? 'png' : 'md'
   return `dsh-chat-share-${safe}-${from + 1}-${to + 1}.${extension}`
 }
 

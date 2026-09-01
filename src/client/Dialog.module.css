@@ -120,6 +120,14 @@
   font-variant-numeric: tabular-nums;
 }
 
+.rowCheck {
+  flex: none;
+  width: 14px;
+  text-align: center;
+  color: var(--dsw-alias-label-primary);
+  font-size: 12px;
+}
+
 .rowRole {
   flex: none;
   font-weight: 600;

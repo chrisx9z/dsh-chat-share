@@ -3,7 +3,7 @@ import { type SessionId, type SnapshotStore } from '@deepseek-ai/dsh-client-runt
 import type { HistoryEntry } from '@deepseek-ai/dsh-api-remotes/client';
 import { type ShareLabels, type ShareMeta } from './render.ts';
 /** Output formats the shared artifact can take. */
-export type ShareFormat = 'markdown' | 'html' | 'txt';
+export type ShareFormat = 'markdown' | 'html' | 'txt' | 'png';
 /** One session image referenced by a message, resolved lazily for HTML exports. */
 export interface ShareImage {
     readonly attachmentId: string;
@@ -14,7 +14,7 @@ export interface ShareImage {
 export interface ShareMessage {
     /** Durable event seq the row came from. */
     readonly seq: number;
-    readonly role: 'user' | 'assistant' | 'tool';
+    readonly role: 'user' | 'assistant' | 'tool' | 'subagent';
     /** Text blocks joined verbatim; `[image]` when the message carried only images. */
     readonly text: string;
     /** Unix epoch milliseconds of the durable event. */
@@ -31,15 +31,21 @@ export interface ChatShareEntry {
     readonly raw: readonly HistoryEntry[];
     /** Shareable rows in chronological order (newest last). */
     readonly messages: readonly ShareMessage[];
-    /** Inclusive range start index into `messages`. */
+    /** Inclusive range start index into `messages` (single-select mode). */
     readonly from: number;
-    /** Inclusive range end index into `messages`. */
+    /** Inclusive range end index into `messages` (single-select mode). */
     readonly to: number;
+    /** Multi-select mode: exports the union of `selected` row indices instead of the range. */
+    readonly multiMode: boolean;
+    /** Row indices chosen in multi-select mode (sorted, no duplicates). */
+    readonly selected: readonly number[];
     readonly format: ShareFormat;
     /** Best-effort redaction applied to every rendered artifact. */
     readonly redact: boolean;
     /** Tool-call rows included in the list and artifacts. */
     readonly includeTools: boolean;
+    /** Subagent descendant conversations appended to the rows. */
+    readonly includeSubagents: boolean;
     /** Which output action is in flight, if any. */
     readonly busy: 'copy' | 'download' | null;
     /** Whether the last copy succeeded (the dialog shows a brief check). */
@@ -65,6 +71,17 @@ export type AttachmentReader = (sessionId: SessionId, attachmentId: string) => P
 }>;
 /** Read optional artifact header facts (title, model); wired by the client plugin. */
 export type MetaReader = (sessionId: SessionId) => Promise<ShareMeta>;
+/** One session-backed subagent child (from `subagents.list`). */
+export interface SubagentChild {
+    readonly childSessionId: string;
+    readonly title?: string;
+}
+/** List a Session's direct subagent children; wired to `subagents.list`. */
+export type SubagentReader = (parentSessionId: SessionId) => Promise<SubagentChild[]>;
+/** Read one child's message tail; wired to `subagents.history`. */
+export type ChildHistoryReader = (parentSessionId: SessionId, childSessionId: string) => Promise<readonly HistoryEntry[]>;
+/** Rasterize a detached artifact node to a PNG data URL; wired to `html-to-image`. */
+export type PngConverter = (node: HTMLElement) => Promise<string>;
 /** The narrow content-block view the share builder reads (type-only, no cross-package value import). */
 export interface ShareContentBlock {
     readonly type: string;
@@ -115,6 +132,9 @@ export declare class ChatShareController {
     private readonly attachments?;
     private readonly meta?;
     private readonly labels?;
+    private readonly subagents?;
+    private readonly childHistory?;
+    private readonly toPng?;
     /** uSES-safe state source shared by every Session-scoped dialog contribution. */
     readonly store: SnapshotStore<ChatShareState>;
     private readonly active;
@@ -126,8 +146,11 @@ export declare class ChatShareController {
      * @param attachments - optional `session.attachment` reader for HTML image embedding.
      * @param meta - optional artifact header facts reader (title, model).
      * @param labels - optional live artifact vocabulary (follows the UI locale).
+     * @param subagents - optional `subagents.list` reader for child conversations.
+     * @param childHistory - optional `subagents.history` reader (one message tail per child).
+     * @param toPng - optional `html-to-image` rasterizer for PNG downloads.
      */
-    constructor(reader: HistoryReader, clipboard?: (text: string) => Promise<boolean>, save?: (blob: Blob, filename: string) => void, attachments?: AttachmentReader | undefined, meta?: MetaReader | undefined, labels?: (() => ShareLabels) | undefined);
+    constructor(reader: HistoryReader, clipboard?: (text: string) => Promise<boolean>, save?: (blob: Blob, filename: string) => void, attachments?: AttachmentReader | undefined, meta?: MetaReader | undefined, labels?: (() => ShareLabels) | undefined, subagents?: SubagentReader | undefined, childHistory?: ChildHistoryReader | undefined, toPng?: PngConverter | undefined);
     /**
      * Open (or reopen) one Session's share dialog; concurrent gestures share one load.
      * @param sessionId - Session whose chat segment is shared.
@@ -174,17 +197,40 @@ export declare class ChatShareController {
      */
     setIncludeTools(sessionId: SessionId, includeTools: boolean): void;
     /**
-     * Render the selected range as Markdown and write it to the clipboard.
+     * Toggle multi-select mode: the export becomes the union of chosen rows
+     * instead of the contiguous range. Entering the mode seeds the selection
+     * with the current range; leaving it clears the selection.
+     * @param sessionId - Session owning the dialog.
+     * @param multiMode - export the selected rows.
+     */
+    setMultiMode(sessionId: SessionId, multiMode: boolean): void;
+    /**
+     * Replace the multi-select row set (indices into `messages`, deduplicated).
+     * @param sessionId - Session owning the dialog.
+     * @param indices - chosen row indices.
+     */
+    setSelected(sessionId: SessionId, indices: readonly number[]): void;
+    /**
+     * Toggle subagent descendant conversations appended to the rows.
+     * @param sessionId - Session owning the dialog.
+     * @param includeSubagents - append child conversations.
+     * @returns after the rebuild settles (children are fetched on demand).
+     */
+    setIncludeSubagents(sessionId: SessionId, includeSubagents: boolean): Promise<void>;
+    /**
+     * Render the selected rows as Markdown and write it to the clipboard.
      * @param sessionId - Session owning the dialog.
      * @returns after the write settles; the dialog shows a check on success.
      */
     copy(sessionId: SessionId): Promise<void>;
     /**
-     * Render the selected range in the chosen format and download it as a file.
+     * Render the selected rows in the chosen format and download them as a file.
      * @param sessionId - Session owning the dialog.
      * @returns after the browser save starts.
      */
     download(sessionId: SessionId): Promise<void>;
+    /** Rasterize the artifact HTML into a PNG download. */
+    private downloadPng;
     /**
      * Abort active loads and reach quiescence.
      * @returns after every active operation settles.
@@ -193,6 +239,10 @@ export declare class ChatShareController {
     private entry;
     /** Build the bounded row list from raw history (newest SHARE_MAX_MESSAGES). */
     private buildRows;
+    /** Parent rows plus one section header and message tail per subagent child. */
+    private buildRowsWithSubagents;
+    /** The rows the current selection mode exports: range or multi-select union. */
+    private selectedRows;
     /** Apply the current options to a row list: tool rows filtered, redaction applied. */
     private applyOptions;
     /** The selected inclusive range of the dialog's message list. */

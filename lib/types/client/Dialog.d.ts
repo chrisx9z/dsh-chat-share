@@ -12,6 +12,9 @@ export interface ChatShareDialogInjected {
     setFormat: (sessionId: SessionId, format: ShareFormat) => void;
     setRedact: (sessionId: SessionId, redact: boolean) => void;
     setIncludeTools: (sessionId: SessionId, includeTools: boolean) => void;
+    setIncludeSubagents: (sessionId: SessionId, includeSubagents: boolean) => Promise<void>;
+    setMultiMode: (sessionId: SessionId, multiMode: boolean) => void;
+    setSelected: (sessionId: SessionId, indices: readonly number[]) => void;
     copy: (sessionId: SessionId) => Promise<void>;
     download: (sessionId: SessionId) => Promise<void>;
     dismiss: (sessionId: SessionId) => void;
@@ -22,5 +25,5 @@ export type ChatShareDialogProps = PropsRuntime<'conversation.session.header.uti
  * @param props - Session runtime, bound controller state, actions, and localized copy.
  * @returns the modal portal contribution.
  */
-export declare function ChatShareDialog({ sessionId, useChatShare, setRange, setFormat, setRedact, setIncludeTools, copy, download, dismiss, t, }: ChatShareDialogProps): import("react").JSX.Element;
+export declare function ChatShareDialog({ sessionId, useChatShare, setRange, setFormat, setRedact, setIncludeTools, setIncludeSubagents, setMultiMode, setSelected, copy, download, dismiss, t, }: ChatShareDialogProps): import("react").JSX.Element;
 //# sourceMappingURL=Dialog.d.ts.map

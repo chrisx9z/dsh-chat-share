@@ -19,6 +19,8 @@ export const zh = {
   'dialog.format.markdown': 'Markdown',
   'dialog.format.html': 'HTML',
   'dialog.format.txt': 'TXT',
+  'dialog.format.png': 'PNG',
+  'dialog.capNotice': '仅显示最新 300 条消息；保存 TXT 与 /share txt 会导出完整对话。',
   'dialog.messages': '消息',
   'dialog.preview': '预览',
   'dialog.copy': '复制',
@@ -28,9 +30,12 @@ export const zh = {
   'options': '选项',
   'options.redact': '脱敏敏感信息',
   'options.tools': '包含工具调用',
+  'options.subagents': '包含子代理对话',
+  'options.multiselect': '多选模式',
   'role.user': '用户',
   'role.assistant': '助手',
   'role.tool': '工具',
+  'role.subagent': '子代理',
   'artifact.sharedFrom': '分享自 DeepSeek Harness',
 } as const
 
@@ -52,6 +57,8 @@ export const en: Record<keyof typeof zh, string> = {
   'dialog.format.markdown': 'Markdown',
   'dialog.format.html': 'HTML',
   'dialog.format.txt': 'TXT',
+  'dialog.format.png': 'PNG',
+  'dialog.capNotice': 'Showing the newest 300 messages; Save TXT and /share txt export the whole chat.',
   'dialog.messages': 'Messages',
   'dialog.preview': 'Preview',
   'dialog.copy': 'Copy',
@@ -61,9 +68,12 @@ export const en: Record<keyof typeof zh, string> = {
   'options': 'Options',
   'options.redact': 'Redact sensitive info',
   'options.tools': 'Include tool calls',
+  'options.subagents': 'Include subagent conversations',
+  'options.multiselect': 'Multi-select mode',
   'role.user': 'User',
   'role.assistant': 'Assistant',
   'role.tool': 'Tool',
+  'role.subagent': 'Subagent',
   'artifact.sharedFrom': 'Shared from DeepSeek Harness',
 }
 

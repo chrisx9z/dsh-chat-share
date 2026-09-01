@@ -9,7 +9,7 @@ import {
 } from './render.ts'
 
 /** Output formats the shared artifact can take. */
-export type ShareFormat = 'markdown' | 'html' | 'txt'
+export type ShareFormat = 'markdown' | 'html' | 'txt' | 'png'
 
 /** One session image referenced by a message, resolved lazily for HTML exports. */
 export interface ShareImage {
@@ -22,7 +22,7 @@ export interface ShareImage {
 export interface ShareMessage {
   /** Durable event seq the row came from. */
   readonly seq: number
-  readonly role: 'user' | 'assistant' | 'tool'
+  readonly role: 'user' | 'assistant' | 'tool' | 'subagent'
   /** Text blocks joined verbatim; `[image]` when the message carried only images. */
   readonly text: string
   /** Unix epoch milliseconds of the durable event. */
@@ -40,15 +40,21 @@ export interface ChatShareEntry {
   readonly raw: readonly HistoryEntry[]
   /** Shareable rows in chronological order (newest last). */
   readonly messages: readonly ShareMessage[]
-  /** Inclusive range start index into `messages`. */
+  /** Inclusive range start index into `messages` (single-select mode). */
   readonly from: number
-  /** Inclusive range end index into `messages`. */
+  /** Inclusive range end index into `messages` (single-select mode). */
   readonly to: number
+  /** Multi-select mode: exports the union of `selected` row indices instead of the range. */
+  readonly multiMode: boolean
+  /** Row indices chosen in multi-select mode (sorted, no duplicates). */
+  readonly selected: readonly number[]
   readonly format: ShareFormat
   /** Best-effort redaction applied to every rendered artifact. */
   readonly redact: boolean
   /** Tool-call rows included in the list and artifacts. */
   readonly includeTools: boolean
+  /** Subagent descendant conversations appended to the rows. */
+  readonly includeSubagents: boolean
   /** Which output action is in flight, if any. */
   readonly busy: 'copy' | 'download' | null
   /** Whether the last copy succeeded (the dialog shows a brief check). */
@@ -83,6 +89,24 @@ export type AttachmentReader = (
 
 /** Read optional artifact header facts (title, model); wired by the client plugin. */
 export type MetaReader = (sessionId: SessionId) => Promise<ShareMeta>
+
+/** One session-backed subagent child (from `subagents.list`). */
+export interface SubagentChild {
+  readonly childSessionId: string
+  readonly title?: string
+}
+
+/** List a Session's direct subagent children; wired to `subagents.list`. */
+export type SubagentReader = (parentSessionId: SessionId) => Promise<SubagentChild[]>
+
+/** Read one child's message tail; wired to `subagents.history`. */
+export type ChildHistoryReader = (
+  parentSessionId: SessionId,
+  childSessionId: string,
+) => Promise<readonly HistoryEntry[]>
+
+/** Rasterize a detached artifact node to a PNG data URL; wired to `html-to-image`. */
+export type PngConverter = (node: HTMLElement) => Promise<string>
 
 /** The narrow content-block view the share builder reads (type-only, no cross-package value import). */
 export interface ShareContentBlock {
@@ -218,6 +242,9 @@ export class ChatShareController {
    * @param attachments - optional `session.attachment` reader for HTML image embedding.
    * @param meta - optional artifact header facts reader (title, model).
    * @param labels - optional live artifact vocabulary (follows the UI locale).
+   * @param subagents - optional `subagents.list` reader for child conversations.
+   * @param childHistory - optional `subagents.history` reader (one message tail per child).
+   * @param toPng - optional `html-to-image` rasterizer for PNG downloads.
    */
   constructor(
     private readonly reader: HistoryReader,
@@ -226,6 +253,9 @@ export class ChatShareController {
     private readonly attachments?: AttachmentReader,
     private readonly meta?: MetaReader,
     private readonly labels?: () => ShareLabels,
+    private readonly subagents?: SubagentReader,
+    private readonly childHistory?: ChildHistoryReader,
+    private readonly toPng?: PngConverter,
   ) {}
 
   /**
@@ -327,11 +357,72 @@ export class ChatShareController {
     const clamp = (index: number): number => Math.max(0, Math.min(messages.length - 1, index))
     const from = clamp(current.from)
     const to = clamp(current.to)
-    this.publish(sessionId, { ...current, includeTools, messages, from, to, error: null })
+    const selected = current.selected.filter(index => index < messages.length)
+    this.publish(sessionId, { ...current, includeTools, messages, from, to, selected, error: null })
   }
 
   /**
-   * Render the selected range as Markdown and write it to the clipboard.
+   * Toggle multi-select mode: the export becomes the union of chosen rows
+   * instead of the contiguous range. Entering the mode seeds the selection
+   * with the current range; leaving it clears the selection.
+   * @param sessionId - Session owning the dialog.
+   * @param multiMode - export the selected rows.
+   */
+  setMultiMode(sessionId: SessionId, multiMode: boolean): void {
+    const current = this.entry(sessionId)
+    if (current === undefined) return
+    const selected = multiMode
+      ? [...new Set(Array.from({ length: current.to - current.from + 1 }, (_, offset) => current.from + offset))]
+      : []
+    this.publish(sessionId, { ...current, multiMode, selected, error: null })
+  }
+
+  /**
+   * Replace the multi-select row set (indices into `messages`, deduplicated).
+   * @param sessionId - Session owning the dialog.
+   * @param indices - chosen row indices.
+   */
+  setSelected(sessionId: SessionId, indices: readonly number[]): void {
+    const current = this.entry(sessionId)
+    if (current === undefined) return
+    const selected = [...new Set(indices)]
+      .map(index => Math.max(0, Math.min(current.messages.length - 1, Math.round(index))))
+      .sort((left, right) => left - right)
+    this.publish(sessionId, { ...current, selected, error: null })
+  }
+
+  /**
+   * Toggle subagent descendant conversations appended to the rows.
+   * @param sessionId - Session owning the dialog.
+   * @param includeSubagents - append child conversations.
+   * @returns after the rebuild settles (children are fetched on demand).
+   */
+  async setIncludeSubagents(sessionId: SessionId, includeSubagents: boolean): Promise<void> {
+    const current = this.entry(sessionId)
+    if (current === undefined) return
+    this.publish(sessionId, { ...current, includeSubagents, loading: includeSubagents, error: null })
+    try {
+      const messages = includeSubagents
+        ? await this.buildRowsWithSubagents(sessionId, current.raw, current.includeTools)
+        : this.buildRows(current.raw, current.includeTools)
+      const next = this.entry(sessionId)
+      if (next === undefined) return
+      const clamp = (index: number): number => Math.max(0, Math.min(messages.length - 1, index))
+      const from = clamp(next.from)
+      const to = clamp(next.to)
+      const selected = next.selected.filter(index => index < messages.length)
+      this.publish(sessionId, {
+        ...next, includeSubagents, loading: false, messages, from, to, selected, error: null,
+      })
+    } catch (error: unknown) {
+      const next = this.entry(sessionId)
+      if (next === undefined) return
+      this.publish(sessionId, { ...next, loading: false, error: messageOf(error) })
+    }
+  }
+
+  /**
+   * Render the selected rows as Markdown and write it to the clipboard.
    * @param sessionId - Session owning the dialog.
    * @returns after the write settles; the dialog shows a check on success.
    */
@@ -340,7 +431,7 @@ export class ChatShareController {
     if (current === undefined || current.messages.length === 0 || current.busy !== null) return
     this.publish(sessionId, { ...current, busy: 'copy', copied: false, error: null })
     const meta = await this.metaOf(sessionId)
-    const text = renderShareMarkdown(this.applyOptions(current, this.range(current)), {
+    const text = renderShareMarkdown(this.applyOptions(current, this.selectedRows(current)), {
       meta,
       ...(this.labels !== undefined ? { labels: this.labels() } : {}),
     })
@@ -353,7 +444,7 @@ export class ChatShareController {
   }
 
   /**
-   * Render the selected range in the chosen format and download it as a file.
+   * Render the selected rows in the chosen format and download them as a file.
    * @param sessionId - Session owning the dialog.
    * @returns after the browser save starts.
    */
@@ -361,8 +452,12 @@ export class ChatShareController {
     const current = this.entry(sessionId)
     if (current === undefined || current.messages.length === 0 || current.busy !== null) return
     this.publish(sessionId, { ...current, busy: 'download', error: null })
-    const selected = this.applyOptions(current, this.range(current))
+    const selected = this.applyOptions(current, this.selectedRows(current))
     try {
+      if (current.format === 'png') {
+        await this.downloadPng(sessionId, selected, current)
+        return
+      }
       const [meta, images] = await Promise.all([
         this.metaOf(sessionId),
         current.format === 'html' ? this.resolveImages(sessionId, selected) : Promise.resolve(undefined),
@@ -388,6 +483,38 @@ export class ChatShareController {
     }
   }
 
+  /** Rasterize the artifact HTML into a PNG download. */
+  private async downloadPng(
+    sessionId: SessionId,
+    selected: readonly ShareMessage[],
+    current: ChatShareEntry,
+  ): Promise<void> {
+    if (this.toPng === undefined) {
+      throw new Error('PNG export is unavailable on this host.')
+    }
+    const meta = await this.metaOf(sessionId)
+    const options = {
+      meta,
+      ...(this.labels !== undefined ? { labels: this.labels() } : {}),
+    }
+    const node = document.createElement('div')
+    node.style.position = 'fixed'
+    node.style.left = '-10000px'
+    node.style.top = '0'
+    node.style.width = '820px'
+    node.innerHTML = renderShareHtml(selected, options)
+    document.body.appendChild(node)
+    try {
+      const dataUrl = await this.toPng(node)
+      const blob = new Blob([dataUrl], { type: 'image/png' })
+      this.save(blob, shareFileName(String(sessionId), current.from, current.to, 'png'))
+      const next = this.store.getSnapshot().bySession[String(sessionId)]
+      if (next !== undefined && next.open) this.publish(sessionId, { ...next, busy: null })
+    } finally {
+      node.remove()
+    }
+  }
+
   /**
    * Abort active loads and reach quiescence.
    * @returns after every active operation settles.
@@ -406,6 +533,38 @@ export class ChatShareController {
   /** Build the bounded row list from raw history (newest SHARE_MAX_MESSAGES). */
   private buildRows(raw: readonly HistoryEntry[], includeTools: boolean): ShareMessage[] {
     return buildShareMessages(raw, { includeTools }).slice(-SHARE_MAX_MESSAGES)
+  }
+
+  /** Parent rows plus one section header and message tail per subagent child. */
+  private async buildRowsWithSubagents(
+    parentSessionId: SessionId,
+    raw: readonly HistoryEntry[],
+    includeTools: boolean,
+  ): Promise<ShareMessage[]> {
+    const rows = buildShareMessages(raw, { includeTools }).slice(-SHARE_MAX_MESSAGES)
+    if (this.subagents === undefined || this.childHistory === undefined) return rows
+    const children = await this.subagents(parentSessionId)
+    const appended: ShareMessage[] = []
+    for (const child of children) {
+      appended.push({
+        seq: Number.NEGATIVE_INFINITY,
+        role: 'subagent',
+        text: child.title ?? child.childSessionId,
+        time: 0,
+      })
+      const events = await this.childHistory(parentSessionId, child.childSessionId)
+      appended.push(...buildShareMessages(events, { includeTools }))
+    }
+    return appended.length === 0 ? rows : [...rows, ...appended]
+  }
+
+  /** The rows the current selection mode exports: range or multi-select union. */
+  private selectedRows(entry: ChatShareEntry): readonly ShareMessage[] {
+    if (!entry.multiMode) return this.range(entry)
+    const byIndex = new Map(entry.messages.map((message, index) => [index, message]))
+    return entry.selected
+      .filter(index => index >= 0 && index < entry.messages.length)
+      .map(index => byIndex.get(index) as ShareMessage)
   }
 
   /** Apply the current options to a row list: tool rows filtered, redaction applied. */
@@ -463,9 +622,12 @@ export class ChatShareController {
       messages: [],
       from: 0,
       to: 0,
+      multiMode: false,
+      selected: [],
       format: current?.format ?? 'markdown',
       redact: current?.redact ?? true,
       includeTools: current?.includeTools ?? false,
+      includeSubagents: current?.includeSubagents ?? false,
       busy: null,
       copied: false,
       error: null,
@@ -480,9 +642,12 @@ export class ChatShareController {
         messages,
         from: 0,
         to: Math.max(0, messages.length - 1),
+        multiMode: false,
+        selected: [],
         format: 'markdown',
         redact: true,
         includeTools: false,
+        includeSubagents: false,
         busy: null,
         copied: false,
         error: null,
@@ -490,8 +655,9 @@ export class ChatShareController {
     } catch (error: unknown) {
       if (signal.aborted) return
       const entry = this.entry(sessionId) ?? {
-        open: true, loading: false, raw: [], messages: [], from: 0, to: 0, format: 'markdown',
-        redact: true, includeTools: false, busy: null, copied: false,
+        open: true, loading: false, raw: [], messages: [], from: 0, to: 0,
+        multiMode: false, selected: [], format: 'markdown',
+        redact: true, includeTools: false, includeSubagents: false, busy: null, copied: false,
       }
       this.publish(sessionId, { ...entry, loading: false, error: messageOf(error) })
     }
@@ -510,14 +676,16 @@ export class ChatShareController {
       const messages = buildShareMessages(raw, { includeTools: false })
       const entry: ChatShareEntry = {
         open: false, loading: false, raw, messages, from: 0, to: Math.max(0, messages.length - 1),
-        format: 'markdown', redact: true, includeTools: false, busy: null, copied: false, error: null,
+        multiMode: false, selected: [], format: 'markdown',
+        redact: true, includeTools: false, includeSubagents: false, busy: null, copied: false, error: null,
       }
       await this.saveTxtBlob(sessionId, entry, lastN)
     } catch (error: unknown) {
       if (signal.aborted) return
       const entry = this.entry(sessionId) ?? {
-        open: false, loading: false, raw: [], messages: [], from: 0, to: 0, format: 'markdown',
-        redact: true, includeTools: false, busy: null, copied: false,
+        open: false, loading: false, raw: [], messages: [], from: 0, to: 0,
+        multiMode: false, selected: [], format: 'markdown',
+        redact: true, includeTools: false, includeSubagents: false, busy: null, copied: false,
       }
       this.publish(sessionId, { ...entry, error: messageOf(error) })
     }

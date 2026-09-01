@@ -17,6 +17,9 @@ export interface ChatShareDialogInjected {
   setFormat: (sessionId: SessionId, format: ShareFormat) => void
   setRedact: (sessionId: SessionId, redact: boolean) => void
   setIncludeTools: (sessionId: SessionId, includeTools: boolean) => void
+  setIncludeSubagents: (sessionId: SessionId, includeSubagents: boolean) => Promise<void>
+  setMultiMode: (sessionId: SessionId, multiMode: boolean) => void
+  setSelected: (sessionId: SessionId, indices: readonly number[]) => void
   copy: (sessionId: SessionId) => Promise<void>
   download: (sessionId: SessionId) => Promise<void>
   dismiss: (sessionId: SessionId) => void
@@ -49,7 +52,8 @@ function errorMessage(error: string | null, t: (key: SessionChatShareKey) => str
  * @returns the modal portal contribution.
  */
 export function ChatShareDialog({
-  sessionId, useChatShare, setRange, setFormat, setRedact, setIncludeTools, copy, download, dismiss, t,
+  sessionId, useChatShare, setRange, setFormat, setRedact, setIncludeTools, setIncludeSubagents,
+  setMultiMode, setSelected, copy, download, dismiss, t,
 }: ChatShareDialogProps) {
   const entry = useChatShare(state => state.bySession[String(sessionId)])
   const open = entry?.open === true
@@ -57,12 +61,16 @@ export function ChatShareDialog({
   const messages = entry?.messages ?? []
   const from = entry?.from ?? 0
   const to = entry?.to ?? 0
+  const multiMode = entry?.multiMode ?? false
+  const selected = entry?.selected ?? []
   const format = entry?.format ?? 'markdown'
   const redact = entry?.redact ?? true
   const includeTools = entry?.includeTools ?? false
+  const includeSubagents = entry?.includeSubagents ?? false
   const busy = entry?.busy ?? null
   const copied = entry?.copied === true
   const error = entry?.error ?? null
+  const capped = messages.length >= 300
 
   const [flashCopied, setFlashCopied] = useState(false)
   useEffect(() => {
@@ -72,21 +80,33 @@ export function ChatShareDialog({
     return () => { window.clearTimeout(timer) }
   }, [copied])
 
-  const roleLabel = (role: 'user' | 'assistant' | 'tool'): string => {
+  const roleLabel = (role: 'user' | 'assistant' | 'tool' | 'subagent'): string => {
     if (role === 'user') return t('role.user')
     if (role === 'assistant') return t('role.assistant')
-    return t('role.tool')
+    if (role === 'tool') return t('role.tool')
+    return t('role.subagent')
   }
 
   const errorText = errorMessage(error, t)
 
   const clickMessage = (index: number): void => {
+    if (multiMode) {
+      const toggled = selected.includes(index)
+        ? selected.filter(item => item !== index)
+        : [...selected, index]
+      setSelected(sessionId, toggled)
+      return
+    }
     if (index < from) setRange(sessionId, index, to)
     else if (index > to) setRange(sessionId, from, index)
     else setRange(sessionId, index, index)
   }
 
-  const range = messages.slice(from, to + 1)
+  const range = multiMode
+    ? selected
+      .filter(index => index >= 0 && index < messages.length)
+      .map(index => messages[index] as (typeof messages)[number])
+    : messages.slice(from, to + 1)
   const previewText = (text: string): string => redact ? redactSensitive(text) : text
 
   const actionsDisabled = busy !== null || messages.length === 0
@@ -127,34 +147,38 @@ export function ChatShareDialog({
       {!loading && errorText === null && messages.length > 0 && (
         <>
           <div className={css.controls}>
-            <label className={css.rangeControl}>
-              <span>{t('dialog.rangeFrom')}</span>
-              <select
-                value={from}
-                disabled={busy !== null}
-                onChange={(event) => { setRange(sessionId, Number(event.target.value), to) }}
-              >
-                {messages.map((message, index) => (
-                  <option key={message.seq} value={index}>
-                    {optionLabel(index, roleLabel(message.role), message.time, message.text)}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className={css.rangeControl}>
-              <span>{t('dialog.rangeTo')}</span>
-              <select
-                value={to}
-                disabled={busy !== null}
-                onChange={(event) => { setRange(sessionId, from, Number(event.target.value)) }}
-              >
-                {messages.map((message, index) => (
-                  <option key={message.seq} value={index}>
-                    {optionLabel(index, roleLabel(message.role), message.time, message.text)}
-                  </option>
-                ))}
-              </select>
-            </label>
+            {!multiMode && (
+              <>
+                <label className={css.rangeControl}>
+                  <span>{t('dialog.rangeFrom')}</span>
+                  <select
+                    value={from}
+                    disabled={busy !== null}
+                    onChange={(event) => { setRange(sessionId, Number(event.target.value), to) }}
+                  >
+                    {messages.map((message, index) => (
+                      <option key={message.seq} value={index}>
+                        {optionLabel(index, roleLabel(message.role), message.time, message.text)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className={css.rangeControl}>
+                  <span>{t('dialog.rangeTo')}</span>
+                  <select
+                    value={to}
+                    disabled={busy !== null}
+                    onChange={(event) => { setRange(sessionId, from, Number(event.target.value)) }}
+                  >
+                    {messages.map((message, index) => (
+                      <option key={message.seq} value={index}>
+                        {optionLabel(index, roleLabel(message.role), message.time, message.text)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </>
+            )}
             <fieldset className={css.formatControl} disabled={busy !== null}>
               <legend>{t('dialog.format')}</legend>
               <label>
@@ -187,6 +211,16 @@ export function ChatShareDialog({
                 />
                 {t('dialog.format.txt')}
               </label>
+              <label>
+                <input
+                  type="radio"
+                  name={`chat-share-format-${String(sessionId)}`}
+                  value="png"
+                  checked={format === 'png'}
+                  onChange={() => { setFormat(sessionId, 'png') }}
+                />
+                {t('dialog.format.png')}
+              </label>
             </fieldset>
             <fieldset className={css.optionControl} disabled={busy !== null}>
               <legend>{t('options')}</legend>
@@ -206,23 +240,47 @@ export function ChatShareDialog({
                 />
                 {t('options.tools')}
               </label>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={includeSubagents}
+                  disabled={loading}
+                  onChange={(event) => { void setIncludeSubagents(sessionId, event.target.checked) }}
+                />
+                {t('options.subagents')}
+              </label>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={multiMode}
+                  onChange={(event) => { setMultiMode(sessionId, event.target.checked) }}
+                />
+                {t('options.multiselect')}
+              </label>
             </fieldset>
           </div>
+          {capped && <p className={css.status}>{t('dialog.capNotice')}</p>}
           <p className={css.messagesHeading}>{t('dialog.messages')}</p>
           <ol className={css.list}>
             {messages.map((message, index) => {
-              const selected = index >= from && index <= to
+              const selectedRow = multiMode ? selected.includes(index) : index >= from && index <= to
               const toolRow = message.role === 'tool'
+              const subagentRow = message.role === 'subagent'
               return (
                 <li key={message.seq}>
                   <button
                     type="button"
-                    className={selected ? `${css.row} ${css.rowSelected}` : css.row}
-                    aria-pressed={selected}
+                    className={selectedRow ? `${css.row} ${css.rowSelected}` : css.row}
+                    aria-pressed={selectedRow}
                     onClick={() => { clickMessage(index) }}
                   >
+                    {multiMode && (
+                      <span className={css.rowCheck} aria-hidden="true">
+                        {selectedRow ? '✓' : ''}
+                      </span>
+                    )}
                     <span className={css.rowIndex}>#{index + 1}</span>
-                    <span className={toolRow ? `${css.rowRole} ${css.rowTool}` : css.rowRole}>
+                    <span className={toolRow || subagentRow ? `${css.rowRole} ${css.rowTool}` : css.rowRole}>
                       {roleLabel(message.role)}
                     </span>
                     <span className={css.rowTime}>{formatShareTime(message.time)}</span>

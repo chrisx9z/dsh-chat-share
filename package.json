@@ -1,6 +1,6 @@
 {
   "name": "dsh-chat-share",
-  "version": "1.2.1",
+  "version": "1.3.0",
   "description": "Share a selected range of chat messages as Markdown, HTML, or plain text (Web /share command, Header button, sidebar ... menu, redaction, auto-save)",
   "type": "module",
   "main": "lib/index.js",

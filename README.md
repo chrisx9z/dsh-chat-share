@@ -50,7 +50,7 @@ needs no build permission and no `prepare` script runs. Releases are tagged `v1.
 or commit for reproducible installs:
 
 ```sh
-dsh plugin --profile demo add github:chrisx9z/dsh-chat-share#v1.2.1
+dsh plugin --profile demo add github:chrisx9z/dsh-chat-share#v1.3.0
 ```
 
 Then use it in any session of that profile:

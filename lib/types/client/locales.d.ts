@@ -18,6 +18,8 @@ export declare const zh: {
     readonly 'dialog.format.markdown': "Markdown";
     readonly 'dialog.format.html': "HTML";
     readonly 'dialog.format.txt': "TXT";
+    readonly 'dialog.format.png': "PNG";
+    readonly 'dialog.capNotice': "仅显示最新 300 条消息；保存 TXT 与 /share txt 会导出完整对话。";
     readonly 'dialog.messages': "消息";
     readonly 'dialog.preview': "预览";
     readonly 'dialog.copy': "复制";
@@ -27,9 +29,12 @@ export declare const zh: {
     readonly options: "选项";
     readonly 'options.redact': "脱敏敏感信息";
     readonly 'options.tools': "包含工具调用";
+    readonly 'options.subagents': "包含子代理对话";
+    readonly 'options.multiselect': "多选模式";
     readonly 'role.user': "用户";
     readonly 'role.assistant': "助手";
     readonly 'role.tool': "工具";
+    readonly 'role.subagent': "子代理";
     readonly 'artifact.sharedFrom': "分享自 DeepSeek Harness";
 };
 /** English chat-share strings. */
