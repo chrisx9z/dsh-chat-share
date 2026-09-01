@@ -4,6 +4,7 @@ export const NS = 'session-chat-share'
 /** Simplified-Chinese chat-share strings. */
 export const zh = {
   'header.label': '分享',
+  'menu.share': '分享',
   'dialog.title': '分享聊天片段',
   'dialog.description': '选择消息范围，以 Markdown 或 HTML 复制或下载。',
   'dialog.loading': '正在加载消息…',
@@ -30,6 +31,7 @@ export const zh = {
 /** English chat-share strings. */
 export const en: Record<keyof typeof zh, string> = {
   'header.label': 'Share',
+  'menu.share': 'Share',
   'dialog.title': 'Share chat segment',
   'dialog.description': 'Select a message range and copy or download it as Markdown or HTML.',
   'dialog.loading': 'Loading messages…',

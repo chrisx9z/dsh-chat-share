@@ -13,12 +13,13 @@ lives in the harness repository as `packages/session-query/session-chat-share` (
 - Registers the Web `/share` slash command: typing `/share` in a session records the command
   lifecycle and (in a Web bundle that composes the browser half) opens the chat-segment share
   dialog.
-- The **browser half** adds a **Share** action to the Session Header. It opens a range-selection
-  dialog that lists the session's shareable messages (append-origin `user/message` and
-  `assistant/message` text), lets you pick an inclusive range via From/To selects or by clicking
-  message rows, choose Markdown or HTML, preview the rendered artifact, then copy it to the
-  clipboard or download it as a self-contained file. Nothing is uploaded: the recipient opens the
-  Markdown or HTML artifact directly.
+- The **browser half** adds a **Share** action to the Session Header and a **Share** row to each
+  session's sidebar `...` menu (through the `sessionRowMenu` registry provided by ui-workspace).
+  Both open a range-selection dialog that lists the session's shareable messages (append-origin
+  `user/message` and `assistant/message` text), lets you pick an inclusive range via From/To
+  selects or by clicking message rows, choose Markdown or HTML, preview the rendered artifact,
+  then copy it to the clipboard or download it as a self-contained file. Nothing is uploaded: the
+  recipient opens the Markdown or HTML artifact directly.
 - History is read through the ordinary `session.history` RPC — no Host endpoint, no persistence
   changes, and no model involvement. The command stays on the human-command plane with zero token
   effect.
@@ -61,7 +62,8 @@ UI, integrate the package into a harness checkout:
 3. Rebuild the Web artifacts and restart `dsh web`.
 
 The browser half then mounts the `Share` capsule into `conversation.session.header.utilities` next
-to the Session-log export action, and `/share` opens the same dialog.
+to the Session-log export action, registers a **Share** row in the sidebar session `...` menu
+through ui-workspace's `sessionRowMenu` registry, and `/share` opens the same dialog.
 
 ## How it works
 
