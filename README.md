@@ -33,10 +33,11 @@ dsh plugin --profile demo add github:chrisx9z/dsh-chat-share
 ```
 
 The package ships **prebuilt artifacts** (`lib/`), so a git install needs no build permission and
-no `prepare` script runs. Pin a commit for reproducible installs:
+no `prepare` script runs. Releases are tagged `v1.x.y`; pin a tag or commit for reproducible
+installs:
 
 ```sh
-dsh plugin --profile demo add github:chrisx9z/dsh-chat-share#<sha>
+dsh plugin --profile demo add github:chrisx9z/dsh-chat-share#v1.0.0
 ```
 
 Then use it in any session of that profile:
