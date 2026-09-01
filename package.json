@@ -1,13 +1,14 @@
 {
   "name": "dsh-chat-share",
-  "version": "1.0.0",
-  "description": "Share a selected range of chat messages as Markdown or HTML (Web /share command)",
+  "version": "1.1.0",
+  "description": "Share a selected range of chat messages as Markdown, HTML, or plain text (Web /share command, Header button, sidebar ... menu)",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/types/index.d.ts",
   "exports": {
     ".": { "types": "./lib/types/index.d.ts", "default": "./lib/index.js" },
     "./invariant": { "types": "./lib/types/invariant.d.ts", "default": "./lib/invariant.js" },
+    "./client": { "types": "./lib/types/client/index.d.ts", "default": "./lib/client.js" },
     "./src/*": "./src/*",
     "./package.json": "./package.json"
   },
@@ -20,5 +21,19 @@
     "@deepseek-ai/cordis": ">=0.0.1-rc.1 <0.2.0",
     "@deepseek-ai/dsh-commands": ">=0.0.1-rc.1 <0.2.0"
   },
-  "dsh": { "bundle": { "patch": "./cordis.patch.yml" } }
+  "dsh": {
+    "bundle": { "patch": "./cordis.patch.yml" },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-api-remotes",
+        "@deepseek-ai/dsh-client-connection",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-commands",
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-workspace"
+      ],
+      "platform": "web"
+    }
+  }
 }

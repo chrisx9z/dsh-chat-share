@@ -1,24 +1,26 @@
 # dsh-chat-share
 
-Share a selected range of chat messages as Markdown or HTML — a community plugin for
+Share a selected range of chat messages as Markdown, HTML, or plain text — a community plugin for
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (tagged
-[`dsh-plugin`](https://github.com/topics/dsh-plugin)).
+[`dsh-plugin`](https://github.com/topics/dsh-plugin) and listed in the
+[awesome-dsh-plugin](https://awesome-dsh-plugin.com) market registry).
 
-This repository is the **standalone distribution** of the plugin. The reference implementation
-lives in the harness repository as `packages/session-query/session-chat-share` (branch
-`feat/session-chat-share` on the upstream fork), where both halves are built and tested.
+This repository is the **standalone distribution** of the plugin: it ships both halves prebuilt
+(`lib/`), installable with `dsh plugin add` and from the Plugin Market. The reference
+implementation lives in the harness repository as `packages/session-query/session-chat-share`
+(branch `feat/session-chat-share` on the upstream fork), where both halves are built and tested.
 
 ## What it does
 
 - Registers the Web `/share` slash command: typing `/share` in a session records the command
-  lifecycle and (in a Web bundle that composes the browser half) opens the chat-segment share
-  dialog.
-- The **browser half** adds a **Share** action to the Session Header and a **Share** row to each
-  session's sidebar `...` menu (through the `sessionRowMenu` registry provided by ui-workspace).
-  Both open a range-selection dialog that lists the session's shareable messages (append-origin
+  lifecycle and opens the chat-segment share dialog.
+- The **browser half** adds a **Share** action to the Session Header, a **Share** row, and a
+  **Save TXT** row to each session's sidebar `...` menu (through the `sessionRowMenu` registry
+  provided by ui-workspace). The dialog lists the session's shareable messages (append-origin
   `user/message` and `assistant/message` text), lets you pick an inclusive range via From/To
   selects or by clicking message rows, choose Markdown, HTML, or TXT, preview the rendered
   artifact, then copy it to the clipboard or download it as a file (`.md` / `.html` / `.txt`).
+  **Save TXT** downloads the whole chat as one `.txt` file directly, without opening the dialog.
   Nothing is uploaded: the recipient opens the artifact directly.
 - History is read through the ordinary `session.history` RPC — no Host endpoint, no persistence
   changes, and no model involvement. The command stays on the human-command plane with zero token
@@ -32,12 +34,12 @@ From a harness checkout (or any machine with the `dsh` CLI), install into a prof
 dsh plugin --profile demo add github:chrisx9z/dsh-chat-share
 ```
 
-The package ships **prebuilt artifacts** (`lib/`), so a git install needs no build permission and
-no `prepare` script runs. Releases are tagged `v1.x.y`; pin a tag or commit for reproducible
-installs:
+The package ships **prebuilt artifacts** (`lib/` — host and browser halves), so a git install
+needs no build permission and no `prepare` script runs. Releases are tagged `v1.x.y`; pin a tag
+or commit for reproducible installs:
 
 ```sh
-dsh plugin --profile demo add github:chrisx9z/dsh-chat-share#v1.0.0
+dsh plugin --profile demo add github:chrisx9z/dsh-chat-share#v1.1.0
 ```
 
 Then use it in any session of that profile:
@@ -46,25 +48,23 @@ Then use it in any session of that profile:
 /share
 ```
 
-## Browser-half integration (the Share button and dialog)
+### Plugin Market
 
-The browser half is compiled into the Web bundle at build time (the harness's `dsh.client` scan
-covers packages inside the repository tree, not externally installed packages). To enable the full
-UI, integrate the package into a harness checkout:
+The plugin is listed in the [awesome-dsh-plugin](https://awesome-dsh-plugin.com) registry (PR
+submission), so it appears in **Settings → Plugin Market** — browse, one-click install, and
+updates once the catalog refreshes (usually within a day of the registry PR merging).
 
-1. Copy this package under `packages/session-query/session-chat-share/`.
-2. Compose the row in `packages/bundle/web-app/cordis.patch.yml`:
+## Browser-half requirements
 
-   ```yaml
-   - id: chat-share
-     name: '@deepseek-ai/dsh-session-chat-share'
-   ```
+The installed package's browser half is picked up by the host's `dsh.client` scan, so the
+Header button, dialog, and sidebar menu entries work on hosts whose composition includes it.
+The sidebar `...` menu rows need ui-workspace's `sessionRowMenu` service — present in dsh web
+builds after 2026-08-18 (and in source checkouts of the harness). On older releases only the
+`/share` command is active until the host is updated.
 
-3. Rebuild the Web artifacts and restart `dsh web`.
-
-The browser half then mounts the `Share` capsule into `conversation.session.header.utilities` next
-to the Session-log export action, registers a **Share** row in the sidebar session `...` menu
-through ui-workspace's `sessionRowMenu` registry, and `/share` opens the same dialog.
+For the official distribution path (the harness repository's own web bundle), integrate the
+package as `packages/session-query/session-chat-share` and compose the `chat-share` row in
+`packages/bundle/web-app/cordis.patch.yml`.
 
 ## How it works
 
@@ -72,16 +72,16 @@ through ui-workspace's `sessionRowMenu` registry, and `/share` opens the same di
   accepted; the dialog owns range selection.
 - Browser half (`src/client/`): a controller pages `session.history` from the tail (up to 300
   shareable messages), keeps per-session dialog state, renders the range with pure renderers
-  (`render.ts`) into Markdown (verbatim text under role headers) or a self-contained HTML page
-  (paragraphs + fenced code blocks), and copies/downloads the artifact.
+  (`render.ts`) into Markdown (verbatim text under role headers), a self-contained HTML page
+  (paragraphs + fenced code blocks), or plain text (TXT), and copies/downloads the artifact.
 - The invariant companion (`src/invariant.ts`) registers the package's no-op runtime invariant,
   matching the harness convention.
 
 ## Development and tests
 
-The 32 package tests (command, controller, renderers, dialog, header action, invariant, and a real
-Loader composition) run inside a deepseek-harness checkout where the `@deepseek-ai/*` workspace
-dependencies resolve:
+The 41 package tests (command, controller, renderers, dialog, header action, row-menu actions,
+invariant, and a real Loader composition) run inside a deepseek-harness checkout where the
+`@deepseek-ai/*` workspace dependencies resolve:
 
 ```sh
 pnpm exec vitest run packages/session-query/session-chat-share
