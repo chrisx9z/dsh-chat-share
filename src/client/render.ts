@@ -1,21 +1,73 @@
-/** Pure renderers that turn a message range into shareable Markdown, plain text, or a self-contained HTML page. */
+/** Pure renderers: Markdown, plain text, GFM-lite HTML, and best-effort redaction. */
 
 import type { ShareFormat, ShareMessage } from './controller.ts'
+
+/** Localized artifact vocabulary; defaults to English when absent. */
+export interface ShareLabels {
+  user: string
+  assistant: string
+  tool: string
+  sharedFrom: string
+}
+
+/** Optional artifact header facts. */
+export interface ShareMeta {
+  /** Session display title (from the title projection). */
+  title?: string
+  /** Last logged model route (`provider/model`). */
+  model?: string
+}
+
+/** Renderer options shared by every format. */
+export interface ShareRenderOptions {
+  labels?: ShareLabels
+  meta?: ShareMeta
+  /** attachmentId → data URI for images embedded in the HTML output. */
+  images?: ReadonlyMap<string, string>
+}
+
+const DEFAULT_LABELS: ShareLabels = {
+  user: 'User',
+  assistant: 'Assistant',
+  tool: 'Tool',
+  sharedFrom: 'Shared from DeepSeek Harness',
+}
 
 /** One fixed timestamp format so shared artifacts read identically on every machine. */
 export function formatShareTime(time: number): string {
   return new Date(time).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'medium' })
 }
 
+function labelsOf(options: ShareRenderOptions): ShareLabels {
+  return options.labels ?? DEFAULT_LABELS
+}
+
+function roleLabel(role: ShareMessage['role'], labels: ShareLabels): string {
+  if (role === 'user') return labels.user
+  if (role === 'assistant') return labels.assistant
+  return labels.tool
+}
+
+/** The artifact header: title, model, and the shared-from line. */
+function headerLines(labels: ShareLabels, meta: ShareMeta | undefined): string[] {
+  const lines: string[] = []
+  if (meta?.title !== undefined && meta.title !== '') lines.push(`# ${meta.title}`, '')
+  if (meta?.model !== undefined && meta.model !== '') lines.push(`Model: ${meta.model}`, '')
+  lines.push(labels.sharedFrom, '')
+  return lines
+}
+
 /**
  * Render the selected range as Markdown with role headers and timestamps.
  * @param messages - chronological share messages (already range-sliced).
+ * @param options - labels, optional header meta.
  * @returns one Markdown document.
  */
-export function renderShareMarkdown(messages: readonly ShareMessage[]): string {
-  const lines: string[] = ['> Shared from DeepSeek Harness', '']
+export function renderShareMarkdown(messages: readonly ShareMessage[], options: ShareRenderOptions = {}): string {
+  const labels = labelsOf(options)
+  const lines: string[] = headerLines(labels, options.meta)
   for (const message of messages) {
-    lines.push(`**${roleLabel(message.role)}** · ${formatShareTime(message.time)}`, '', message.text, '')
+    lines.push(`**${roleLabel(message.role, labels)}** · ${formatShareTime(message.time)}`, '', message.text, '')
   }
   return lines.join('\n').trimEnd() + '\n'
 }
@@ -23,18 +75,16 @@ export function renderShareMarkdown(messages: readonly ShareMessage[]): string {
 /**
  * Render the selected range as plain text with role headers and timestamps.
  * @param messages - chronological share messages (already range-sliced).
+ * @param options - labels, optional header meta.
  * @returns one plain-text document (no markup).
  */
-export function renderShareTxt(messages: readonly ShareMessage[]): string {
-  const lines: string[] = ['Shared from DeepSeek Harness', '']
+export function renderShareTxt(messages: readonly ShareMessage[], options: ShareRenderOptions = {}): string {
+  const labels = labelsOf(options)
+  const lines: string[] = headerLines(labels, options.meta).map(line => line.replace(/^# /, ''))
   for (const message of messages) {
-    lines.push(`${roleLabel(message.role)} · ${formatShareTime(message.time)}`, '', message.text, '')
+    lines.push(`${roleLabel(message.role, labels)} · ${formatShareTime(message.time)}`, '', message.text, '')
   }
   return lines.join('\n').trimEnd() + '\n'
-}
-
-function roleLabel(role: ShareMessage['role']): string {
-  return role === 'user' ? 'User' : 'Assistant'
 }
 
 /** Escape text for safe inclusion in the generated HTML page. */
@@ -47,63 +97,178 @@ export function escapeHtml(text: string): string {
     .replaceAll("'", '&#39;')
 }
 
-/** Split plain text on blank lines into escaped paragraphs, dropping empty splits. */
-function paragraphs(plain: string): string[] {
-  return plain
-    .split(/\n{2,}/)
-    .filter(paragraph => paragraph.trim() !== '')
-    .map(paragraph => `<p>${escapeHtml(paragraph.trim()).replaceAll('\n', '<br />')}</p>`)
+/** Render inline markdown (code, bold, italic, links) on already-escaped text. */
+function inline(escaped: string): string {
+  const codes: string[] = []
+  const withoutCode = escaped.replace(/`([^`]+)`/g, (_match, code: string) => {
+    codes.push(code)
+    return `\u0000${codes.length - 1}\u0000`
+  })
+  // Images never hotlink in the artifact: keep only the alt text.
+  const noImages = withoutCode.replace(/!\[([^\]]*)\]\([^)]+\)/g, (_match, alt: string) => `[${alt}]`)
+  const withLinks = noImages.replace(
+    /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g,
+    (_match, label: string, href: string) => `<a href="${href}" rel="noreferrer">${label}</a>`,
+  )
+  const withStrong = withLinks.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+  const withEm = withStrong.replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>')
+  return withEm.replace(/\u0000(\d+)\u0000/g, (_match, index: string) => `<code>${codes[Number(index)] ?? ''}</code>`)
 }
 
-/**
- * Convert message text to basic HTML: fenced code blocks become `<pre><code>`
- * (the first fence line is treated as a language hint and dropped), everything
- * else is escaped and split into paragraphs.
- * @param text - message markdown-ish text.
- * @returns escaped HTML fragment.
- */
-export function renderRichText(text: string): string {
+/** One `<li>` from a bullet/ordered line's content. */
+function listItem(content: string): string {
+  return `<li>${inline(escapeHtml(content.trim()))}</li>`
+}
+
+/** Split raw text into blocks and render GFM-lite HTML. */
+export function renderGfmHtml(text: string): string {
+  const lines = text.split('\n')
   const blocks: string[] = []
-  let plain = ''
-  let index = 0
-  for (;;) {
-    const fence = text.indexOf('```', index)
-    if (fence === -1) {
-      plain += text.slice(index)
-      break
-    }
-    plain += text.slice(index, fence)
-    const close = text.indexOf('```', fence + 3)
-    if (close === -1) {
-      plain += text.slice(fence)
-      break
-    }
-    const code = text.slice(fence + 3, close).replace(/^[^\n]*\n/, '').trimEnd()
-    if (plain.trim() !== '') {
-      blocks.push(...paragraphs(plain))
-      plain = ''
-    }
-    blocks.push(`<pre><code>${escapeHtml(code)}</code></pre>`)
-    index = close + 3
+  let plain: string[] = []
+  const flushPlain = (): void => {
+    if (plain.length === 0) return
+    blocks.push(`<p>${plain.map(line => inline(escapeHtml(line.trim()))).join('<br />')}</p>`)
+    plain = []
   }
-  if (plain.trim() !== '') blocks.push(...paragraphs(plain))
+  let index = 0
+  while (index < lines.length) {
+    const line = lines[index] as string
+    const trimmed = line.trim()
+    // Blank lines separate paragraphs.
+    if (trimmed === '') {
+      flushPlain()
+      index += 1
+      continue
+    }
+    // Fenced code block.
+    const fence = /^```([^\n]*)$/.exec(trimmed)
+    if (fence !== null) {
+      flushPlain()
+      const code: string[] = []
+      index += 1
+      while (index < lines.length && !/^```\s*$/.test((lines[index] as string).trim())) {
+        code.push(lines[index] as string)
+        index += 1
+      }
+      index += 1
+      const lang = fence[1]?.trim() ?? ''
+      const cls = lang === '' ? '' : ` class="language-${escapeHtml(lang)}"`
+      blocks.push(`<pre><code${cls}>${escapeHtml(code.join('\n').trimEnd())}</code></pre>`)
+      continue
+    }
+    // ATX heading.
+    const heading = /^(#{1,6})\s+(.+)$/.exec(trimmed)
+    if (heading !== null) {
+      flushPlain()
+      const level = Math.min(6, heading[1]?.length ?? 6)
+      blocks.push(`<h${level}>${inline(escapeHtml((heading[2] as string).trim()))}</h${level}>`)
+      index += 1
+      continue
+    }
+    // Blockquote.
+    if (trimmed.startsWith('>')) {
+      flushPlain()
+      const quote: string[] = []
+      while (index < lines.length && (lines[index] as string).trim().startsWith('>')) {
+        quote.push((lines[index] as string).trim().replace(/^>\s?/, ''))
+        index += 1
+      }
+      blocks.push(`<blockquote><p>${quote.map(q => inline(escapeHtml(q))).join('<br />')}</p></blockquote>`)
+      continue
+    }
+    // Unordered list.
+    const bullet = /^[-*+]\s+(.+)$/.exec(trimmed)
+    if (bullet !== null) {
+      flushPlain()
+      const items: string[] = [listItem(bullet[1] as string)]
+      index += 1
+      while (index < lines.length) {
+        const next = (lines[index] as string).trim()
+        const nextBullet = /^[-*+]\s+(.+)$/.exec(next)
+        if (nextBullet === null) break
+        items.push(listItem(nextBullet[1] as string))
+        index += 1
+      }
+      blocks.push(`<ul>${items.join('')}</ul>`)
+      continue
+    }
+    // Ordered list.
+    const ordered = /^\d+\.\s+(.+)$/.exec(trimmed)
+    if (ordered !== null) {
+      flushPlain()
+      const items: string[] = [listItem(ordered[1] as string)]
+      index += 1
+      while (index < lines.length) {
+        const next = (lines[index] as string).trim()
+        const nextOrdered = /^\d+\.\s+(.+)$/.exec(next)
+        if (nextOrdered === null) break
+        items.push(listItem(nextOrdered[1] as string))
+        index += 1
+      }
+      blocks.push(`<ol>${items.join('')}</ol>`)
+      continue
+    }
+    // GFM table: header row, delimiter row, body rows.
+    if (trimmed.includes('|') && index + 1 < lines.length && /^\s*\|?[\s:|-]+\|?\s*$/.test((lines[index + 1] as string).trim())
+      && (lines[index + 1] as string).includes('-')) {
+      flushPlain()
+      const splitRow = (row: string): string[] => row.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map(cell => cell.trim())
+      const header = splitRow(trimmed)
+      index += 2
+      const body: string[][] = []
+      while (index < lines.length && (lines[index] as string).trim().includes('|')) {
+        body.push(splitRow((lines[index] as string).trim()))
+        index += 1
+      }
+      const cells = (row: string[], tag: 'th' | 'td'): string => row
+        .map(cell => `<${tag}>${inline(escapeHtml(cell))}</${tag}>`).join('')
+      blocks.push(`<table><thead><tr>${cells(header, 'th')}</tr></thead>`
+        + `<tbody>${body.map(row => `<tr>${cells(row, 'td')}</tr>`).join('')}</tbody></table>`)
+      continue
+    }
+    plain.push(line)
+    index += 1
+  }
+  flushPlain()
   return blocks.join('\n')
 }
 
 /**
- * Render the selected range as a self-contained HTML page.
+ * Render the selected range as a self-contained HTML page with GFM-lite
+ * body rendering; session images embed as data URIs when provided.
  * @param messages - chronological share messages (already range-sliced).
+ * @param options - labels, optional header meta, optional resolved images.
  * @returns a complete HTML document the recipient can open in any browser.
  */
-export function renderShareHtml(messages: readonly ShareMessage[]): string {
+export function renderShareHtml(messages: readonly ShareMessage[], options: ShareRenderOptions = {}): string {
+  const labels = labelsOf(options)
   const body = messages
-    .map(message => [
-      '<section class="message">',
-      `<p class="role">${escapeHtml(roleLabel(message.role))} · ${escapeHtml(formatShareTime(message.time))}</p>`,
-      renderRichText(message.text),
-      '</section>',
-    ].join('\n'))
+    .map((message) => {
+      const imageTags = (message.images ?? [])
+        .map((image) => {
+          const dataUri = options.images?.get(image.attachmentId)
+          return dataUri === undefined
+            ? `<p class="image-marker">[${escapeHtml(image.name ?? labels.sharedFrom)}]</p>`
+            : `<p class="image"><img src="${dataUri}" alt="${escapeHtml(image.name ?? '')}" loading="lazy" /></p>`
+        })
+        .join('\n')
+      return [
+        '<section class="message">',
+        `<p class="role">${escapeHtml(roleLabel(message.role, labels))} · ${escapeHtml(formatShareTime(message.time))}</p>`,
+        message.text !== '' ? renderGfmHtml(message.text) : '',
+        imageTags,
+        '</section>',
+      ].join('\n')
+    })
     .join('\n')
+  const metaLines: string[] = []
+  if (options.meta?.title !== undefined && options.meta.title !== '') {
+    metaLines.push(`<h1>${escapeHtml(options.meta.title)}</h1>`)
+  }
+  if (options.meta?.model !== undefined && options.meta.model !== '') {
+    metaLines.push(`<p class="meta">Model: ${escapeHtml(options.meta.model)}</p>`)
+  }
+  metaLines.push(`<p class="meta">${escapeHtml(labels.sharedFrom)}</p>`)
   return [
     '<!doctype html>',
     '<html lang="en">',
@@ -118,15 +283,21 @@ export function renderShareHtml(messages: readonly ShareMessage[]): string {
     '.meta { color: #6b7280; font-size: 13px; }',
     '.message { margin: 20px 0; }',
     '.role { font-weight: 600; }',
+    'h1 { font-size: 22px; }',
+    'h2 { font-size: 19px; } h3 { font-size: 17px; } h4, h5, h6 { font-size: 15px; }',
     'pre { background: #f6f8fa; padding: 12px; border-radius: 8px; overflow-x: auto; }',
     '@media (prefers-color-scheme: dark) { pre { background: #161b22; } }',
     'code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; }',
+    'table { border-collapse: collapse; margin: 8px 0; }',
+    'th, td { border: 1px solid #d0d7de; padding: 4px 10px; font-size: 14px; }',
+    'blockquote { margin: 8px 0; padding-left: 12px; border-left: 3px solid #d0d7de; color: #57606a; }',
+    'img { max-width: 100%; border-radius: 8px; }',
     'p { margin: 8px 0; }',
     '</style>',
     '</head>',
     '<body>',
     '<main>',
-    '<p class="meta">Shared from DeepSeek Harness</p>',
+    ...metaLines,
     body,
     '</main>',
     '</body>',
@@ -140,4 +311,22 @@ export function shareFileName(sessionId: string, from: number, to: number, forma
   const safe = sessionId.replace(/[^A-Za-z0-9_-]/g, '_')
   const extension = format === 'html' ? 'html' : format === 'txt' ? 'txt' : 'md'
   return `dsh-chat-share-${safe}-${from + 1}-${to + 1}.${extension}`
+}
+
+/**
+ * Best-effort redaction for shared artifacts: masks common credential shapes
+ * and local absolute/home paths. Applied to message text before rendering.
+ * @param text - raw message text.
+ * @returns text with sensitive shapes replaced by `[key]` / `[path]`.
+ */
+export function redactSensitive(text: string): string {
+  return text
+    .replace(
+      /\b(sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{10,})\b/g,
+      '[key]',
+    )
+    .replace(
+      /(?:~(?=[/\\]|$)(?:[/\\][^\s"']*)?|(?:\/Users\/[^/\s]+|C:\\Users\\[^\\\s]+)(?:[/\\][^\s"']*)?)/g,
+      '[path]',
+    )
 }

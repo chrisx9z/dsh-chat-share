@@ -3,20 +3,32 @@
 import { createSnapshotStore, type SessionId, type SnapshotStore } from '@deepseek-ai/dsh-client-runtime/client'
 import { writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { HistoryEntry } from '@deepseek-ai/dsh-api-remotes/client'
-import { renderShareHtml, renderShareMarkdown, renderShareTxt, shareFileName } from './render.ts'
+import {
+  redactSensitive, renderShareHtml, renderShareMarkdown, renderShareTxt, shareFileName,
+  type ShareLabels, type ShareMeta,
+} from './render.ts'
 
 /** Output formats the shared artifact can take. */
 export type ShareFormat = 'markdown' | 'html' | 'txt'
 
-/** One shareable message on the ordered chat surface. */
+/** One session image referenced by a message, resolved lazily for HTML exports. */
+export interface ShareImage {
+  readonly attachmentId: string
+  readonly mediaType: string
+  readonly name?: string
+}
+
+/** One shareable row on the ordered chat surface. */
 export interface ShareMessage {
-  /** Durable event seq the message came from. */
+  /** Durable event seq the row came from. */
   readonly seq: number
-  readonly role: 'user' | 'assistant'
+  readonly role: 'user' | 'assistant' | 'tool'
   /** Text blocks joined verbatim; `[image]` when the message carried only images. */
   readonly text: string
   /** Unix epoch milliseconds of the durable event. */
   readonly time: number
+  /** Image blocks attached to this message (HTML exports embed them). */
+  readonly images?: readonly ShareImage[]
 }
 
 /** One Session's share-dialog state. */
@@ -24,13 +36,19 @@ export interface ChatShareEntry {
   readonly open: boolean
   /** History pages are still being read. */
   readonly loading: boolean
-  /** Shareable messages in chronological order (newest last). */
+  /** Raw chronological history entries the message list is rebuilt from. */
+  readonly raw: readonly HistoryEntry[]
+  /** Shareable rows in chronological order (newest last). */
   readonly messages: readonly ShareMessage[]
   /** Inclusive range start index into `messages`. */
   readonly from: number
   /** Inclusive range end index into `messages`. */
   readonly to: number
   readonly format: ShareFormat
+  /** Best-effort redaction applied to every rendered artifact. */
+  readonly redact: boolean
+  /** Tool-call rows included in the list and artifacts. */
+  readonly includeTools: boolean
   /** Which output action is in flight, if any. */
   readonly busy: 'copy' | 'download' | null
   /** Whether the last copy succeeded (the dialog shows a brief check). */
@@ -57,14 +75,27 @@ export type HistoryReader = (
   maxMessages: number,
 ) => Promise<HistoryPage>
 
+/** Resolve one session image to its base64 payload; wired to `session.attachment`. */
+export type AttachmentReader = (
+  sessionId: SessionId,
+  attachmentId: string,
+) => Promise<{ data: string; mediaType: string }>
+
+/** Read optional artifact header facts (title, model); wired by the client plugin. */
+export type MetaReader = (sessionId: SessionId) => Promise<ShareMeta>
+
 /** The narrow content-block view the share builder reads (type-only, no cross-package value import). */
 export interface ShareContentBlock {
   readonly type: string
   readonly text?: string
+  readonly attachment?: { readonly attachmentId?: string; readonly mediaType?: string; readonly name?: string }
 }
 
 /** Cap on collected share messages, so a huge session cannot stall the dialog. */
 export const SHARE_MAX_MESSAGES = 300
+
+/** Cap on tool-call arguments carried into artifacts. */
+const TOOL_ARGS_MAX_CHARS = 800
 
 /** Messages per `session.history` page. */
 const PAGE_MESSAGES = 50
@@ -81,43 +112,76 @@ export const CHAT_SHARE_ERROR = {
 } as const
 
 /**
- * Join a message's content into one share text: text blocks verbatim, and a
- * `[image]` marker for image-only messages.
+ * Split a message's content into share text and image references.
  * @param content - the message's model-facing blocks.
- * @returns the share text, or '' when the message carries nothing shareable.
+ * @returns the share text ('' when nothing shareable) and the image refs.
  */
-export function shareMessageText(content: readonly ShareContentBlock[]): string {
+export function shareMessageParts(content: readonly ShareContentBlock[]): {
+  text: string
+  images: ShareImage[]
+} {
   const parts: string[] = []
-  let images = 0
+  const images: ShareImage[] = []
   for (const block of content) {
     if (block.type === 'text') parts.push(block.text ?? '')
-    else if (block.type === 'image') images += 1
+    else if (block.type === 'image') {
+      const attachmentId = block.attachment?.attachmentId
+      if (attachmentId !== undefined) {
+        images.push({
+          attachmentId,
+          mediaType: block.attachment?.mediaType ?? 'image/png',
+          ...(block.attachment?.name !== undefined ? { name: block.attachment.name } : {}),
+        })
+      } else {
+        parts.push('[image]')
+      }
+    }
   }
   const text = parts.join('\n')
-  return text !== '' ? text : images > 0 ? '[image]' : ''
+  return { text: text !== '' ? text : images.length > 0 ? '[image]' : '', images }
 }
 
 /**
- * Fold history entries (chronological) into shareable user/assistant messages.
+ * Fold history entries (chronological) into shareable rows: user/assistant
+ * messages with their image refs, optional tool-call rows, newest last.
  * Tool results, boundary markers, and surface-replacing compaction copies are
  * excluded; messages with no shareable text are dropped.
  * @param events - history entries in log order.
- * @returns share messages in the same order.
+ * @param options - include tool-call rows when enabled.
+ * @returns share rows in the same order.
  */
-export function buildShareMessages(events: readonly HistoryEntry[]): ShareMessage[] {
+export function buildShareMessages(
+  events: readonly HistoryEntry[],
+  options: { includeTools?: boolean } = {},
+): ShareMessage[] {
   const messages: ShareMessage[] = []
   for (const entry of events) {
     const event = entry.event
     if (event.type === 'user/message') {
       if (event.surfaceOp !== 'append') continue
-      const text = shareMessageText(event.data.content)
+      const { text, images } = shareMessageParts(event.data.content)
       if (text === '') continue
-      messages.push({ seq: event.seq, role: 'user', text, time: event.time })
+      messages.push({
+        seq: event.seq, role: 'user', text, time: event.time,
+        ...(images.length > 0 ? { images } : {}),
+      })
     } else if (event.type === 'assistant/message') {
       if (event.surfaceOp !== 'append') continue
-      const text = shareMessageText(event.data.message.content)
+      const { text, images } = shareMessageParts(event.data.message.content)
       if (text === '') continue
-      messages.push({ seq: event.seq, role: 'assistant', text, time: event.time })
+      messages.push({
+        seq: event.seq, role: 'assistant', text, time: event.time,
+        ...(images.length > 0 ? { images } : {}),
+      })
+    } else if (event.type === 'tool/call' && options.includeTools === true) {
+      const args = event.data.arguments
+      const bounded = args.length > TOOL_ARGS_MAX_CHARS ? `${args.slice(0, TOOL_ARGS_MAX_CHARS)}\n…` : args
+      messages.push({
+        seq: event.seq,
+        role: 'tool',
+        text: `\`${event.data.name}\`\n\n${bounded}`,
+        time: event.time,
+      })
     }
   }
   return messages
@@ -151,11 +215,17 @@ export class ChatShareController {
    * @param reader - paged `session.history` reader (tail page when `beforeSeq` is absent).
    * @param clipboard - clipboard writer returning whether the write landed.
    * @param save - browser save operation for the generated artifact Blob.
+   * @param attachments - optional `session.attachment` reader for HTML image embedding.
+   * @param meta - optional artifact header facts reader (title, model).
+   * @param labels - optional live artifact vocabulary (follows the UI locale).
    */
   constructor(
     private readonly reader: HistoryReader,
     private readonly clipboard: (text: string) => Promise<boolean> = writeClipboard,
     private readonly save: (blob: Blob, filename: string) => void = saveBlob,
+    private readonly attachments?: AttachmentReader,
+    private readonly meta?: MetaReader,
+    private readonly labels?: () => ShareLabels,
   ) {}
 
   /**
@@ -190,16 +260,17 @@ export class ChatShareController {
    * the dialog (the sidebar `...` menu action). Joins an in-flight history
    * load instead of starting a second one.
    * @param sessionId - Session whose chat is saved.
+   * @param lastN - when given, save only the newest N messages.
    * @returns after the browser save starts; load failures publish the error.
    */
-  saveTxt(sessionId: SessionId): Promise<void> {
+  saveTxt(sessionId: SessionId, lastN?: number): Promise<void> {
     const existing = this.active.get(sessionId)
     if (existing !== undefined) {
-      return existing.done.then(() => this.downloadAllTxt(sessionId))
+      return existing.done.then(() => this.downloadAllTxt(sessionId, lastN))
     }
     if (this.disposed) return Promise.resolve()
     const abort = new AbortController()
-    const done = this.loadAllTxt(sessionId, abort.signal).finally(() => {
+    const done = this.loadAllTxt(sessionId, lastN, abort.signal).finally(() => {
       this.active.delete(sessionId)
     })
     this.active.set(sessionId, { abort, done })
@@ -225,12 +296,38 @@ export class ChatShareController {
   /**
    * Switch the output format.
    * @param sessionId - Session owning the dialog.
-   * @param format - Markdown or HTML.
+   * @param format - Markdown, HTML, or TXT.
    */
   setFormat(sessionId: SessionId, format: ShareFormat): void {
     const current = this.entry(sessionId)
     if (current === undefined) return
     this.publish(sessionId, { ...current, format, error: null })
+  }
+
+  /**
+   * Toggle best-effort redaction of the rendered artifacts.
+   * @param sessionId - Session owning the dialog.
+   * @param redact - mask credential shapes and local paths.
+   */
+  setRedact(sessionId: SessionId, redact: boolean): void {
+    const current = this.entry(sessionId)
+    if (current === undefined) return
+    this.publish(sessionId, { ...current, redact, error: null })
+  }
+
+  /**
+   * Toggle tool-call rows in the list and artifacts (rebuilt from raw history).
+   * @param sessionId - Session owning the dialog.
+   * @param includeTools - show tool-call rows.
+   */
+  setIncludeTools(sessionId: SessionId, includeTools: boolean): void {
+    const current = this.entry(sessionId)
+    if (current === undefined) return
+    const messages = this.buildRows(current.raw, includeTools)
+    const clamp = (index: number): number => Math.max(0, Math.min(messages.length - 1, index))
+    const from = clamp(current.from)
+    const to = clamp(current.to)
+    this.publish(sessionId, { ...current, includeTools, messages, from, to, error: null })
   }
 
   /**
@@ -242,7 +339,11 @@ export class ChatShareController {
     const current = this.entry(sessionId)
     if (current === undefined || current.messages.length === 0 || current.busy !== null) return
     this.publish(sessionId, { ...current, busy: 'copy', copied: false, error: null })
-    const text = renderShareMarkdown(this.range(current))
+    const meta = await this.metaOf(sessionId)
+    const text = renderShareMarkdown(this.applyOptions(current, this.range(current)), {
+      meta,
+      ...(this.labels !== undefined ? { labels: this.labels() } : {}),
+    })
     const ok = await this.clipboard(text)
     const next = this.store.getSnapshot().bySession[String(sessionId)]
     if (next === undefined || !next.open) return
@@ -256,17 +357,26 @@ export class ChatShareController {
    * @param sessionId - Session owning the dialog.
    * @returns after the browser save starts.
    */
-  download(sessionId: SessionId): Promise<void> {
+  async download(sessionId: SessionId): Promise<void> {
     const current = this.entry(sessionId)
-    if (current === undefined || current.messages.length === 0 || current.busy !== null) return Promise.resolve()
+    if (current === undefined || current.messages.length === 0 || current.busy !== null) return
     this.publish(sessionId, { ...current, busy: 'download', error: null })
-    const selected = this.range(current)
+    const selected = this.applyOptions(current, this.range(current))
     try {
+      const [meta, images] = await Promise.all([
+        this.metaOf(sessionId),
+        current.format === 'html' ? this.resolveImages(sessionId, selected) : Promise.resolve(undefined),
+      ])
+      const options = {
+        meta,
+        ...(this.labels !== undefined ? { labels: this.labels() } : {}),
+        ...(images !== undefined ? { images } : {}),
+      }
       const blob = current.format === 'html'
-        ? new Blob([renderShareHtml(selected)], { type: 'text/html;charset=utf-8' })
+        ? new Blob([renderShareHtml(selected, options)], { type: 'text/html;charset=utf-8' })
         : current.format === 'txt'
-          ? new Blob([renderShareTxt(selected)], { type: 'text/plain;charset=utf-8' })
-          : new Blob([renderShareMarkdown(selected)], { type: 'text/markdown;charset=utf-8' })
+          ? new Blob([renderShareTxt(selected, options)], { type: 'text/plain;charset=utf-8' })
+          : new Blob([renderShareMarkdown(selected, options)], { type: 'text/markdown;charset=utf-8' })
       this.save(blob, shareFileName(String(sessionId), current.from, current.to, current.format))
       const next = this.store.getSnapshot().bySession[String(sessionId)]
       if (next !== undefined && next.open) this.publish(sessionId, { ...next, busy: null })
@@ -276,7 +386,6 @@ export class ChatShareController {
         this.publish(sessionId, { ...next, busy: null, error: messageOf(error) || CHAT_SHARE_ERROR.downloadFailed })
       }
     }
-    return Promise.resolve()
   }
 
   /**
@@ -294,8 +403,51 @@ export class ChatShareController {
     return this.store.getSnapshot().bySession[String(sessionId)]
   }
 
+  /** Build the bounded row list from raw history (newest SHARE_MAX_MESSAGES). */
+  private buildRows(raw: readonly HistoryEntry[], includeTools: boolean): ShareMessage[] {
+    return buildShareMessages(raw, { includeTools }).slice(-SHARE_MAX_MESSAGES)
+  }
+
+  /** Apply the current options to a row list: tool rows filtered, redaction applied. */
+  private applyOptions(entry: ChatShareEntry, rows: readonly ShareMessage[]): ShareMessage[] {
+    const kept = entry.includeTools ? [...rows] : rows.filter(message => message.role !== 'tool')
+    return entry.redact
+      ? kept.map(message => ({ ...message, text: redactSensitive(message.text) }))
+      : kept
+  }
+
+  /** The selected inclusive range of the dialog's message list. */
   private range(entry: ChatShareEntry): readonly ShareMessage[] {
     return entry.messages.slice(entry.from, entry.to + 1)
+  }
+
+  private async metaOf(sessionId: SessionId): Promise<ShareMeta> {
+    if (this.meta === undefined) return {}
+    try {
+      return await this.meta(sessionId)
+    } catch {
+      return {}
+    }
+  }
+
+  private async resolveImages(
+    sessionId: SessionId,
+    messages: readonly ShareMessage[],
+  ): Promise<Map<string, string> | undefined> {
+    if (this.attachments === undefined) return undefined
+    const resolved = new Map<string, string>()
+    for (const message of messages) {
+      for (const image of message.images ?? []) {
+        if (resolved.has(image.attachmentId)) continue
+        try {
+          const { data, mediaType } = await this.attachments(sessionId, image.attachmentId)
+          resolved.set(image.attachmentId, `data:${mediaType};base64,${data}`)
+        } catch {
+          // Keep the placeholder marker for images that fail to resolve.
+        }
+      }
+    }
+    return resolved
   }
 
   private async run(sessionId: SessionId, signal: AbortSignal): Promise<void> {
@@ -307,23 +459,30 @@ export class ChatShareController {
     this.publish(sessionId, {
       open: true,
       loading: true,
+      raw: [],
       messages: [],
       from: 0,
       to: 0,
       format: current?.format ?? 'markdown',
+      redact: current?.redact ?? true,
+      includeTools: current?.includeTools ?? false,
       busy: null,
       copied: false,
       error: null,
     })
     try {
-      const messages = await this.loadMessages(sessionId, signal)
+      const raw = await this.loadRaw(sessionId, signal)
+      const messages = this.buildRows(raw, false)
       this.publish(sessionId, {
         open: true,
         loading: false,
+        raw,
         messages,
         from: 0,
         to: Math.max(0, messages.length - 1),
         format: 'markdown',
+        redact: true,
+        includeTools: false,
         busy: null,
         copied: false,
         error: null,
@@ -331,13 +490,58 @@ export class ChatShareController {
     } catch (error: unknown) {
       if (signal.aborted) return
       const entry = this.entry(sessionId) ?? {
-        open: true, loading: false, messages: [], from: 0, to: 0, format: 'markdown', busy: null, copied: false,
+        open: true, loading: false, raw: [], messages: [], from: 0, to: 0, format: 'markdown',
+        redact: true, includeTools: false, busy: null, copied: false,
       }
       this.publish(sessionId, { ...entry, loading: false, error: messageOf(error) })
     }
   }
 
-  private async loadMessages(sessionId: SessionId, signal: AbortSignal): Promise<ShareMessage[]> {    const pages: HistoryEntry[][] = []
+  /** Load the whole shareable chat and hand it to the browser save operation. */
+  private async loadAllTxt(sessionId: SessionId, lastN: number | undefined, signal: AbortSignal): Promise<void> {
+    const current = this.entry(sessionId)
+    if (current !== undefined && current.messages.length > 0) {
+      await this.saveTxtBlob(sessionId, current, lastN)
+      return
+    }
+    try {
+      const raw = await this.loadRaw(sessionId, signal)
+      const messages = this.buildRows(raw, false)
+      const entry: ChatShareEntry = {
+        open: false, loading: false, raw, messages, from: 0, to: Math.max(0, messages.length - 1),
+        format: 'markdown', redact: true, includeTools: false, busy: null, copied: false, error: null,
+      }
+      await this.saveTxtBlob(sessionId, entry, lastN)
+    } catch (error: unknown) {
+      if (signal.aborted) return
+      const entry = this.entry(sessionId) ?? {
+        open: false, loading: false, raw: [], messages: [], from: 0, to: 0, format: 'markdown',
+        redact: true, includeTools: false, busy: null, copied: false,
+      }
+      this.publish(sessionId, { ...entry, error: messageOf(error) })
+    }
+  }
+
+  /** Save the already-loaded shareable chat as one plain-text file. */
+  private async downloadAllTxt(sessionId: SessionId, lastN: number | undefined): Promise<void> {
+    const entry = this.entry(sessionId)
+    if (entry === undefined || entry.messages.length === 0) return
+    await this.saveTxtBlob(sessionId, entry, lastN)
+  }
+
+  private async saveTxtBlob(sessionId: SessionId, entry: ChatShareEntry, lastN: number | undefined): Promise<void> {
+    const rows = this.applyOptions(entry, entry.messages)
+    const slice = lastN === undefined ? rows : rows.slice(-lastN)
+    const meta = await this.metaOf(sessionId)
+    const blob = new Blob([renderShareTxt(slice, {
+      meta,
+      ...(this.labels !== undefined ? { labels: this.labels() } : {}),
+    })], { type: 'text/plain;charset=utf-8' })
+    this.save(blob, shareFileName(String(sessionId), 0, Math.max(0, slice.length - 1), 'txt'))
+  }
+
+  private async loadRaw(sessionId: SessionId, signal: AbortSignal): Promise<HistoryEntry[]> {
+    const pages: HistoryEntry[][] = []
     let beforeSeq: number | undefined
     let pagesRead = 0
     for (;;) {
@@ -350,9 +554,8 @@ export class ChatShareController {
       if (beforeSeq === undefined || ++pagesRead >= MAX_PAGES) break
     }
     // Pages arrive newest-first; reverse the page order only, keeping each
-    // page's internal ascending order, then cap at the newest messages.
-    const chronological = pages.reverse().flat()
-    return buildShareMessages(chronological).slice(-SHARE_MAX_MESSAGES)
+    // page's internal ascending order.
+    return pages.reverse().flat()
   }
 
   private readPage(
@@ -371,38 +574,6 @@ export class ChatShareController {
       }
     })
     return Promise.race([this.reader(sessionId, beforeSeq, maxMessages), abort])
-  }
-
-  /** Load the whole shareable chat and hand it to the browser save operation. */
-  private async loadAllTxt(sessionId: SessionId, signal: AbortSignal): Promise<void> {
-    const current = this.entry(sessionId)
-    if (current !== undefined && current.messages.length > 0) {
-      this.saveTxtBlob(sessionId, current.messages)
-      return
-    }
-    try {
-      const messages = await this.loadMessages(sessionId, signal)
-      this.saveTxtBlob(sessionId, messages)
-    } catch (error: unknown) {
-      if (signal.aborted) return
-      const entry = this.entry(sessionId) ?? {
-        open: false, loading: false, messages: [], from: 0, to: 0, format: 'markdown', busy: null, copied: false,
-      }
-      this.publish(sessionId, { ...entry, error: messageOf(error) })
-    }
-  }
-
-  /** Save the already-loaded shareable chat as one plain-text file. */
-  private downloadAllTxt(sessionId: SessionId): Promise<void> {
-    const entry = this.entry(sessionId)
-    if (entry === undefined || entry.messages.length === 0) return Promise.resolve()
-    this.saveTxtBlob(sessionId, entry.messages)
-    return Promise.resolve()
-  }
-
-  private saveTxtBlob(sessionId: SessionId, messages: readonly ShareMessage[]): void {
-    const blob = new Blob([renderShareTxt(messages)], { type: 'text/plain;charset=utf-8' })
-    this.save(blob, shareFileName(String(sessionId), 0, messages.length - 1, 'txt'))
   }
 
   private publish(sessionId: SessionId, entry: ChatShareEntry): void {

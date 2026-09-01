@@ -49,16 +49,29 @@
   color: var(--dsw-alias-label-secondary);
 }
 
-.formatControl legend {
+.formatControl legend,
+.optionControl legend {
   padding: 0;
   margin-bottom: 4px;
 }
 
-.formatControl label {
+.formatControl label,
+.optionControl label {
   display: inline-flex;
   align-items: center;
   gap: 4px;
   cursor: pointer;
+}
+
+.optionControl {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  border: none;
+  font-size: 13px;
+  color: var(--dsw-alias-label-secondary);
 }
 
 .messagesHeading {
@@ -112,6 +125,11 @@
   font-weight: 600;
 }
 
+.rowTool {
+  color: var(--dsw-alias-label-dimmed);
+  font-weight: 400;
+}
+
 .rowTime {
   flex: none;
   color: var(--dsw-alias-label-dimmed);
@@ -138,15 +156,29 @@
 .previewBody {
   margin: 8px 0 0;
   padding: 10px 12px;
-  max-height: 200px;
+  max-height: 240px;
   overflow: auto;
   border: 1px solid var(--dsw-alias-border-l2);
   border-radius: 8px;
   background: var(--dsw-alias-bg-elevated);
   color: var(--dsw-alias-label-primary);
-  font-family: var(--dsw-font-mono);
-  font-size: 12px;
-  line-height: 18px;
-  white-space: pre-wrap;
+  font-size: 13px;
+  line-height: 20px;
   word-break: break-word;
+}
+
+.previewRow {
+  margin: 8px 0;
+}
+
+.previewRow:first-child {
+  margin-top: 0;
+}
+
+.previewRole {
+  display: block;
+  margin-bottom: 2px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
 }

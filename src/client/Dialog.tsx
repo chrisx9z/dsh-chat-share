@@ -1,14 +1,13 @@
 import { useEffect, useState } from 'react'
 import type { ObservableSnapshot, SessionId } from '@deepseek-ai/dsh-client-runtime/client'
-import { Button, IconCheckOutline16, IconCopyOutline16, IconDownloadOutline16, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
+import {
+  Button, IconCheckOutline16, IconCopyOutline16, IconDownloadOutline16, MarkdownText, Modal,
+} from '@deepseek-ai/dsh-client-ui-primitives'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import { CHAT_SHARE_ERROR, type ChatShareState, type ShareFormat } from './controller.ts'
 import { NS, type SessionChatShareKey } from './locales.ts'
-import { formatShareTime, renderShareHtml, renderShareMarkdown, renderShareTxt } from './render.ts'
+import { formatShareTime, redactSensitive } from './render.ts'
 import css from './Dialog.module.css'
-
-/** Preview character ceiling inside the dialog; the shared artifact itself is never truncated. */
-const PREVIEW_MAX_CHARS = 6000
 
 /** Browser operations and state injected into the Session Header contribution. */
 export interface ChatShareDialogInjected {
@@ -16,6 +15,8 @@ export interface ChatShareDialogInjected {
   open: (sessionId: SessionId) => Promise<void>
   setRange: (sessionId: SessionId, from: number, to: number) => void
   setFormat: (sessionId: SessionId, format: ShareFormat) => void
+  setRedact: (sessionId: SessionId, redact: boolean) => void
+  setIncludeTools: (sessionId: SessionId, includeTools: boolean) => void
   copy: (sessionId: SessionId) => Promise<void>
   download: (sessionId: SessionId) => Promise<void>
   dismiss: (sessionId: SessionId) => void
@@ -48,7 +49,7 @@ function errorMessage(error: string | null, t: (key: SessionChatShareKey) => str
  * @returns the modal portal contribution.
  */
 export function ChatShareDialog({
-  sessionId, useChatShare, setRange, setFormat, copy, download, dismiss, t,
+  sessionId, useChatShare, setRange, setFormat, setRedact, setIncludeTools, copy, download, dismiss, t,
 }: ChatShareDialogProps) {
   const entry = useChatShare(state => state.bySession[String(sessionId)])
   const open = entry?.open === true
@@ -57,6 +58,8 @@ export function ChatShareDialog({
   const from = entry?.from ?? 0
   const to = entry?.to ?? 0
   const format = entry?.format ?? 'markdown'
+  const redact = entry?.redact ?? true
+  const includeTools = entry?.includeTools ?? false
   const busy = entry?.busy ?? null
   const copied = entry?.copied === true
   const error = entry?.error ?? null
@@ -69,7 +72,11 @@ export function ChatShareDialog({
     return () => { window.clearTimeout(timer) }
   }, [copied])
 
-  const roleLabel = (role: 'user' | 'assistant'): string => t(role === 'user' ? 'role.user' : 'role.assistant')
+  const roleLabel = (role: 'user' | 'assistant' | 'tool'): string => {
+    if (role === 'user') return t('role.user')
+    if (role === 'assistant') return t('role.assistant')
+    return t('role.tool')
+  }
 
   const errorText = errorMessage(error, t)
 
@@ -80,12 +87,7 @@ export function ChatShareDialog({
   }
 
   const range = messages.slice(from, to + 1)
-  const rendered = format === 'html'
-    ? renderShareHtml(range)
-    : format === 'txt' ? renderShareTxt(range) : renderShareMarkdown(range)
-  const preview = rendered.length > PREVIEW_MAX_CHARS
-    ? `${rendered.slice(0, PREVIEW_MAX_CHARS)}\n${t('dialog.previewTruncated')}`
-    : rendered
+  const previewText = (text: string): string => redact ? redactSensitive(text) : text
 
   const actionsDisabled = busy !== null || messages.length === 0
 
@@ -186,11 +188,31 @@ export function ChatShareDialog({
                 {t('dialog.format.txt')}
               </label>
             </fieldset>
+            <fieldset className={css.optionControl} disabled={busy !== null}>
+              <legend>{t('options')}</legend>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={redact}
+                  onChange={(event) => { setRedact(sessionId, event.target.checked) }}
+                />
+                {t('options.redact')}
+              </label>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={includeTools}
+                  onChange={(event) => { setIncludeTools(sessionId, event.target.checked) }}
+                />
+                {t('options.tools')}
+              </label>
+            </fieldset>
           </div>
           <p className={css.messagesHeading}>{t('dialog.messages')}</p>
           <ol className={css.list}>
             {messages.map((message, index) => {
               const selected = index >= from && index <= to
+              const toolRow = message.role === 'tool'
               return (
                 <li key={message.seq}>
                   <button
@@ -200,7 +222,9 @@ export function ChatShareDialog({
                     onClick={() => { clickMessage(index) }}
                   >
                     <span className={css.rowIndex}>#{index + 1}</span>
-                    <span className={css.rowRole}>{roleLabel(message.role)}</span>
+                    <span className={toolRow ? `${css.rowRole} ${css.rowTool}` : css.rowRole}>
+                      {roleLabel(message.role)}
+                    </span>
                     <span className={css.rowTime}>{formatShareTime(message.time)}</span>
                     <span className={css.rowText}>{message.text.split('\n')[0]}</span>
                   </button>
@@ -208,9 +232,18 @@ export function ChatShareDialog({
               )
             })}
           </ol>
-          <details className={css.preview}>
+          <details className={css.preview} open>
             <summary>{t('dialog.preview')}</summary>
-            <pre className={css.previewBody}>{preview}</pre>
+            <div className={css.previewBody}>
+              {range.map(message => (
+                <div key={message.seq} className={css.previewRow}>
+                  <span className={css.previewRole}>
+                    {roleLabel(message.role)} · {formatShareTime(message.time)}
+                  </span>
+                  <MarkdownText text={previewText(message.text)} />
+                </div>
+              ))}
+            </div>
           </details>
         </>
       )}

@@ -7,11 +7,15 @@ import type {} from '@deepseek-ai/dsh-client-ui-commands/client'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 // Type-only: pulls the ui-workspace Context merge (ctx.sessionRowMenu).
 import type {} from '@deepseek-ai/dsh-client-ui-workspace/client'
-import { ChatShareController, type HistoryPage, type HistoryReader, type ShareFormat } from './controller.ts'
+import {
+  ChatShareController,
+  type AttachmentReader, type HistoryPage, type HistoryReader, type MetaReader, type ShareFormat,
+} from './controller.ts'
 import type { ChatShareDialogInjected } from './Dialog.tsx'
 import { ChatShareHeaderAction } from './HeaderAction.tsx'
 import { en, NS, zh, type SessionChatShareKey } from './locales.ts'
 import { chatShareRowMenuAction, chatShareSaveTxtMenuAction } from './row-menu.ts'
+import type { ShareLabels, ShareMeta } from './render.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -47,12 +51,90 @@ function historyReader(connection: ConnectionHandle): HistoryReader {
   }
 }
 
+/** Wire `session.attachment` for HTML image embedding. */
+function attachmentReader(connection: ConnectionHandle): AttachmentReader {
+  return async (sessionId: SessionId, attachmentId: string) => {
+    const response = await connection.api.sessions.attachment({
+      sessionId,
+      attachmentId: attachmentId as never,
+    })
+    const result = response.result
+    if (!result.ok) throw new Error(`Attachment read failed: ${result.error.message}`)
+    return { data: result.value.data, mediaType: result.value.attachment.mediaType }
+  }
+}
+
+/**
+ * Wire the artifact header facts: session title from the list projection and
+ * the last logged model route from the history tail's request headers.
+ * @param connection - the shared wire handle.
+ * @param readHistory - the same paged reader the controller uses.
+ * @returns one meta reader (never throws).
+ */
+function metaReader(connection: ConnectionHandle, readHistory: HistoryReader): MetaReader {
+  return async (sessionId: SessionId): Promise<ShareMeta> => {
+    const title = await connection.api.sessions.list({}).then((response) => {
+      const result = response.result
+      if (!result.ok) return undefined
+      const row = result.value.items.find(item => String(item.sessionId) === String(sessionId))
+      const values = row?.projections?.values as Record<string, unknown> | undefined
+      const candidate = values?.['title']
+      return typeof candidate === 'string' && candidate !== '' ? candidate : undefined
+    }).catch(() => undefined)
+    let model: string | undefined
+    const tail = await readHistory(sessionId, undefined, 50).catch(() => ({ events: [], hasMore: false }))
+    for (let index = tail.events.length - 1; index >= 0; index -= 1) {
+      const event = tail.events[index]?.event
+      if (event?.type === 'request/header') {
+        const config = event.data.header.config
+        model = `${config.provider}/${config.model}`
+        break
+      }
+    }
+    return {
+      ...(title !== undefined ? { title } : {}),
+      ...(model !== undefined ? { model } : {}),
+    }
+  }
+}
+
+/** The artifact vocabulary follows the active UI locale at render time. */
+function labelsOf(translate: (key: SessionChatShareKey) => string): () => ShareLabels {
+  return () => ({
+    user: translate('role.user'),
+    assistant: translate('role.assistant'),
+    tool: translate('role.tool'),
+    sharedFrom: translate('artifact.sharedFrom'),
+  })
+}
+
+/** Run a `/share` command intent produced by the host command handler. */
+function runShareIntent(controller: ChatShareController, sessionId: SessionId, resultText: string): void {
+  const [verb, flag, count] = resultText.split(':')
+  if (verb !== 'share') return
+  if (flag === 'txt') {
+    const lastN = count === undefined || count === '' ? undefined : Number(count)
+    void controller.saveTxt(sessionId, Number.isFinite(lastN) ? lastN : undefined)
+  } else {
+    void controller.open(sessionId)
+  }
+}
+
 /**
  * Provide the share controller and mount its dialog into the Session Header.
  * @param ctx - browser context carrying slots, locale, and connection services.
  */
 export function apply(ctx: ClientContext): void {
-  const controller = new ChatShareController(historyReader(ctx.get('connection') as ConnectionHandle))
+  const connection = ctx.get('connection') as ConnectionHandle
+  const readHistory = historyReader(connection)
+  const controller = new ChatShareController(
+    readHistory,
+    undefined,
+    undefined,
+    attachmentReader(connection),
+    metaReader(connection, readHistory),
+    labelsOf(ctx.locale.bind(NS)),
+  )
   ctx.provide('chatShare', controller)
   ctx.effect(() => async () => { await controller.dispose() }, 'session-chat-share: browser lifecycle')
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'session-chat-share: browser dictionaries')
@@ -66,7 +148,7 @@ export function apply(ctx: ClientContext): void {
     () => menuT('menu.saveTxt'),
   )), 'session-chat-share: row menu save-txt action')
   ctx.on('command/executed', (sessionId, commandName, result) => {
-    if (commandName === 'share' && result.kind === 'success') void controller.open(sessionId)
+    if (commandName === 'share' && result.kind === 'success') runShareIntent(controller, sessionId, result.text ?? 'share')
   })
   ctx.slots.inject('conversation.session.header.utilities', () => ctx.slots.register({
     name: 'conversation.session.header.utilities',
@@ -77,6 +159,8 @@ export function apply(ctx: ClientContext): void {
       open: (sessionId: SessionId) => controller.open(sessionId),
       setRange: (sessionId: SessionId, from: number, to: number) => { controller.setRange(sessionId, from, to) },
       setFormat: (sessionId: SessionId, format: ShareFormat) => { controller.setFormat(sessionId, format) },
+      setRedact: (sessionId: SessionId, redact: boolean) => { controller.setRedact(sessionId, redact) },
+      setIncludeTools: (sessionId: SessionId, includeTools: boolean) => { controller.setIncludeTools(sessionId, includeTools) },
       copy: (sessionId: SessionId) => controller.copy(sessionId),
       download: (sessionId: SessionId) => controller.download(sessionId),
       dismiss: (sessionId: SessionId) => { controller.dismiss(sessionId) },

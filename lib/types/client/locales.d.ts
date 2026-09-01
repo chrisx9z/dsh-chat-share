@@ -20,13 +20,17 @@ export declare const zh: {
     readonly 'dialog.format.txt': "TXT";
     readonly 'dialog.messages': "消息";
     readonly 'dialog.preview': "预览";
-    readonly 'dialog.previewTruncated': "预览已截断。";
     readonly 'dialog.copy': "复制";
     readonly 'dialog.copied': "已复制";
     readonly 'dialog.download': "下载";
     readonly 'dialog.close': "关闭";
+    readonly options: "选项";
+    readonly 'options.redact': "脱敏敏感信息";
+    readonly 'options.tools': "包含工具调用";
     readonly 'role.user': "用户";
     readonly 'role.assistant': "助手";
+    readonly 'role.tool': "工具";
+    readonly 'artifact.sharedFrom': "分享自 DeepSeek Harness";
 };
 /** English chat-share strings. */
 export declare const en: Record<keyof typeof zh, string>;

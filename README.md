@@ -14,19 +14,28 @@ implementation lives in the harness repository as `packages/session-query/sessio
 
 ## What it does
 
-- Registers the Web `/share` slash command: typing `/share` in a session records the command
-  lifecycle and opens the chat-segment share dialog.
+- Registers the Web `/share` slash command — plain `/share` opens the dialog, `/share txt` saves
+  the whole chat as one `.txt`, `/share last <n>` saves only the newest `n` messages (combine:
+  `/share txt last 10`).
 - The **browser half** adds a **Share** action to the Session Header, a **Share** row, and a
   **Save TXT** row to each session's sidebar `...` menu (through the `sessionRowMenu` registry
   provided by ui-workspace). The dialog lists the session's shareable messages (append-origin
   `user/message` and `assistant/message` text), lets you pick an inclusive range via From/To
   selects or by clicking message rows, choose Markdown, HTML, or TXT, preview the rendered
-  artifact, then copy it to the clipboard or download it as a file (`.md` / `.html` / `.txt`).
+  artifact (GFM), then copy it to the clipboard or download it as a file (`.md` / `.html` /
+  `.txt`). Options: **redact sensitive info** (credential shapes and local absolute/home paths,
+  on by default) and **include tool calls** (bounded tool-call rows, off by default).
   **Save TXT** downloads the whole chat as one `.txt` file directly, without opening the dialog.
   Nothing is uploaded: the recipient opens the artifact directly.
-- History is read through the ordinary `session.history` RPC — no Host endpoint, no persistence
-  changes, and no model involvement. The command stays on the human-command plane with zero token
-  effect.
+- The HTML artifact is a self-contained page with **GFM-lite** rendering (headings, lists,
+  tables, blockquotes, links, fenced code, inline code/emphasis) and **session images embedded
+  as data URIs**; artifact headers carry the Session title and last model route when known, and
+  follow the active UI locale.
+- Optional host-side **auto-save**: with `autoSaveDir` configured on the plugin row, one TXT per
+  Session is written after every completed turn.
+- History is read through the ordinary `session.history` RPC and images through
+  `session.attachment` — no Host endpoint, no persistence changes, and no model involvement. The
+  command stays on the human-command plane with zero token effect.
 
 ## Install
 
@@ -41,7 +50,7 @@ needs no build permission and no `prepare` script runs. Releases are tagged `v1.
 or commit for reproducible installs:
 
 ```sh
-dsh plugin --profile demo add github:chrisx9z/dsh-chat-share#v1.1.1
+dsh plugin --profile demo add github:chrisx9z/dsh-chat-share#v1.2.0
 ```
 
 Then use it in any session of that profile:
