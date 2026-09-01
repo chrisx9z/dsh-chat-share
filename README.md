@@ -17,9 +17,9 @@ lives in the harness repository as `packages/session-query/session-chat-share` (
   session's sidebar `...` menu (through the `sessionRowMenu` registry provided by ui-workspace).
   Both open a range-selection dialog that lists the session's shareable messages (append-origin
   `user/message` and `assistant/message` text), lets you pick an inclusive range via From/To
-  selects or by clicking message rows, choose Markdown or HTML, preview the rendered artifact,
-  then copy it to the clipboard or download it as a self-contained file. Nothing is uploaded: the
-  recipient opens the Markdown or HTML artifact directly.
+  selects or by clicking message rows, choose Markdown, HTML, or TXT, preview the rendered
+  artifact, then copy it to the clipboard or download it as a file (`.md` / `.html` / `.txt`).
+  Nothing is uploaded: the recipient opens the artifact directly.
 - History is read through the ordinary `session.history` RPC — no Host endpoint, no persistence
   changes, and no model involvement. The command stays on the human-command plane with zero token
   effect.
