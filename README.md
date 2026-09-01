@@ -1,5 +1,7 @@
 # dsh-chat-share
 
+English | [中文](README.zh.md)
+
 Share a selected range of chat messages as Markdown, HTML, or plain text — a community plugin for
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (tagged
 [`dsh-plugin`](https://github.com/topics/dsh-plugin) and listed in the
@@ -39,7 +41,7 @@ needs no build permission and no `prepare` script runs. Releases are tagged `v1.
 or commit for reproducible installs:
 
 ```sh
-dsh plugin --profile demo add github:chrisx9z/dsh-chat-share#v1.1.0
+dsh plugin --profile demo add github:chrisx9z/dsh-chat-share#v1.1.1
 ```
 
 Then use it in any session of that profile:
