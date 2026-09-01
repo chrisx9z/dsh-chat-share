@@ -11,7 +11,7 @@ import { ChatShareController, type HistoryPage, type HistoryReader, type ShareFo
 import type { ChatShareDialogInjected } from './Dialog.tsx'
 import { ChatShareHeaderAction } from './HeaderAction.tsx'
 import { en, NS, zh, type SessionChatShareKey } from './locales.ts'
-import { chatShareRowMenuAction } from './row-menu.ts'
+import { chatShareRowMenuAction, chatShareSaveTxtMenuAction } from './row-menu.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -61,6 +61,10 @@ export function apply(ctx: ClientContext): void {
     sessionId => controller.open(sessionId),
     () => menuT('menu.share'),
   )), 'session-chat-share: row menu action')
+  ctx.effect(() => ctx.sessionRowMenu.register(chatShareSaveTxtMenuAction(
+    sessionId => controller.saveTxt(sessionId),
+    () => menuT('menu.saveTxt'),
+  )), 'session-chat-share: row menu save-txt action')
   ctx.on('command/executed', (sessionId, commandName, result) => {
     if (commandName === 'share' && result.kind === 'success') void controller.open(sessionId)
   })

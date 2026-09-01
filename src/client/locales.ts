@@ -5,6 +5,7 @@ export const NS = 'session-chat-share'
 export const zh = {
   'header.label': '分享',
   'menu.share': '分享',
+  'menu.saveTxt': '保存 TXT',
   'dialog.title': '分享聊天片段',
   'dialog.description': '选择消息范围，以 Markdown、HTML 或 TXT 复制或下载。',
   'dialog.loading': '正在加载消息…',
@@ -33,6 +34,7 @@ export const zh = {
 export const en: Record<keyof typeof zh, string> = {
   'header.label': 'Share',
   'menu.share': 'Share',
+  'menu.saveTxt': 'Save TXT',
   'dialog.title': 'Share chat segment',
   'dialog.description': 'Select a message range and copy or download it as Markdown, HTML, or TXT.',
   'dialog.loading': 'Loading messages…',

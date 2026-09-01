@@ -186,6 +186,27 @@ export class ChatShareController {
   }
 
   /**
+   * Download the Session's whole shareable chat as plain text without opening
+   * the dialog (the sidebar `...` menu action). Joins an in-flight history
+   * load instead of starting a second one.
+   * @param sessionId - Session whose chat is saved.
+   * @returns after the browser save starts; load failures publish the error.
+   */
+  saveTxt(sessionId: SessionId): Promise<void> {
+    const existing = this.active.get(sessionId)
+    if (existing !== undefined) {
+      return existing.done.then(() => this.downloadAllTxt(sessionId))
+    }
+    if (this.disposed) return Promise.resolve()
+    const abort = new AbortController()
+    const done = this.loadAllTxt(sessionId, abort.signal).finally(() => {
+      this.active.delete(sessionId)
+    })
+    this.active.set(sessionId, { abort, done })
+    return done
+  }
+
+  /**
    * Select the inclusive message range, clamping and normalizing the bounds.
    * @param sessionId - Session owning the dialog.
    * @param from - range start index.
@@ -316,8 +337,7 @@ export class ChatShareController {
     }
   }
 
-  private async loadMessages(sessionId: SessionId, signal: AbortSignal): Promise<ShareMessage[]> {
-    const pages: HistoryEntry[][] = []
+  private async loadMessages(sessionId: SessionId, signal: AbortSignal): Promise<ShareMessage[]> {    const pages: HistoryEntry[][] = []
     let beforeSeq: number | undefined
     let pagesRead = 0
     for (;;) {
@@ -351,6 +371,38 @@ export class ChatShareController {
       }
     })
     return Promise.race([this.reader(sessionId, beforeSeq, maxMessages), abort])
+  }
+
+  /** Load the whole shareable chat and hand it to the browser save operation. */
+  private async loadAllTxt(sessionId: SessionId, signal: AbortSignal): Promise<void> {
+    const current = this.entry(sessionId)
+    if (current !== undefined && current.messages.length > 0) {
+      this.saveTxtBlob(sessionId, current.messages)
+      return
+    }
+    try {
+      const messages = await this.loadMessages(sessionId, signal)
+      this.saveTxtBlob(sessionId, messages)
+    } catch (error: unknown) {
+      if (signal.aborted) return
+      const entry = this.entry(sessionId) ?? {
+        open: false, loading: false, messages: [], from: 0, to: 0, format: 'markdown', busy: null, copied: false,
+      }
+      this.publish(sessionId, { ...entry, error: messageOf(error) })
+    }
+  }
+
+  /** Save the already-loaded shareable chat as one plain-text file. */
+  private downloadAllTxt(sessionId: SessionId): Promise<void> {
+    const entry = this.entry(sessionId)
+    if (entry === undefined || entry.messages.length === 0) return Promise.resolve()
+    this.saveTxtBlob(sessionId, entry.messages)
+    return Promise.resolve()
+  }
+
+  private saveTxtBlob(sessionId: SessionId, messages: readonly ShareMessage[]): void {
+    const blob = new Blob([renderShareTxt(messages)], { type: 'text/plain;charset=utf-8' })
+    this.save(blob, shareFileName(String(sessionId), 0, messages.length - 1, 'txt'))
   }
 
   private publish(sessionId: SessionId, entry: ChatShareEntry): void {
