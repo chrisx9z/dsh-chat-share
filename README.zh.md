@@ -14,17 +14,19 @@
 
 ## 安装
 
-在 harness checkout（或任何装有 `dsh` CLI 的机器）中安装到 profile：
+**npm**（推荐——插件市场优先 npm 源）：
 
 ```sh
-dsh plugin --profile demo add github:chrisx9z/dsh-chat-share
+dsh plugin --profile demo add dsh-chat-share
 ```
 
-包内已带**预构建产物**（`lib/`——host 与 browser 两个半区），git 安装无需构建权限，也不需要 `prepare` 脚本。发布版本以 `v1.x.y` 标记；如需可复现安装，可固定 tag 或 commit：
+**GitHub**（备选；附带相同的预构建产物）：
 
 ```sh
-dsh plugin --profile demo add github:chrisx9z/dsh-chat-share#v1.1.1
+dsh plugin --profile demo add github:chrisx9z/dsh-chat-share#v1.3.0
 ```
+
+包内已带**预构建产物**（`lib/`——host 与 browser 两个半区），两种安装都不需要构建步骤。发布版本以 `v1.x.y` 标记；如需可复现安装，可固定 tag 或 commit。
 
 然后在该 profile 的任意会话中使用：
 
@@ -34,7 +36,7 @@ dsh plugin --profile demo add github:chrisx9z/dsh-chat-share#v1.1.1
 
 ### 插件市场
 
-插件已收录于 [awesome-dsh-plugin](https://awesome-dsh-plugin.com) 目录（通过 PR 提交），因此会出现在 **设置 → 插件市场** 中——可浏览、一键安装，目录刷新后即可获得更新（通常目录 PR 合并后一天内生效）。
+插件已收录于 [awesome-dsh-plugin](https://awesome-dsh-plugin.com) 目录（通过 PR 提交），因此会出现在 **设置 → 插件市场** 中——可浏览、一键安装，目录刷新后即可获得更新（通常目录 PR 合并后一天内生效）。上方的 npm 源可让市场安装直接解析到已发布的包。
 
 ## 浏览器半区要求
 

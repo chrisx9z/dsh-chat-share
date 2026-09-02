@@ -39,19 +39,20 @@ implementation lives in the harness repository as `packages/session-query/sessio
 
 ## Install
 
-From a harness checkout (or any machine with the `dsh` CLI), install into a profile:
+**npm** (preferred — the Plugin Market prefers npm sources):
 
 ```sh
-dsh plugin --profile demo add github:chrisx9z/dsh-chat-share
+dsh plugin --profile demo add dsh-chat-share
 ```
 
-The package ships **prebuilt artifacts** (`lib/` — host and browser halves), so a git install
-needs no build permission and no `prepare` script runs. Releases are tagged `v1.x.y`; pin a tag
-or commit for reproducible installs:
+**GitHub** (alternative; ships the same prebuilt artifacts):
 
 ```sh
 dsh plugin --profile demo add github:chrisx9z/dsh-chat-share#v1.3.0
 ```
+
+The package ships **prebuilt artifacts** (`lib/` — host and browser halves), so neither install
+needs a build step. Releases are tagged `v1.x.y`; pin a tag or commit for reproducible installs.
 
 Then use it in any session of that profile:
 
@@ -63,7 +64,8 @@ Then use it in any session of that profile:
 
 The plugin is listed in the [awesome-dsh-plugin](https://awesome-dsh-plugin.com) registry (PR
 submission), so it appears in **Settings → Plugin Market** — browse, one-click install, and
-updates once the catalog refreshes (usually within a day of the registry PR merging).
+updates once the catalog refreshes (usually within a day of the registry PR merging). The npm
+source above makes market installs resolve to the published package.
 
 ## Browser-half requirements
 
